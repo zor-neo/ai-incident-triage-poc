@@ -73,7 +73,8 @@ flowchart LR
 
 Full network and security detail: [`docs/network-design.md`](docs/network-design.md),
 [`docs/security-and-threat-model.md`](docs/security-and-threat-model.md), and the ADRs in
-[`docs/adr/`](docs/adr).
+[`docs/adr/`](docs/adr). The same diagram with a walk-through of the flows and the live
+resource inventory lives in [`docs/architecture.md`](docs/architecture.md).
 
 ## What the service does
 
@@ -293,6 +294,8 @@ bucket are intentionally left behind and cost ~$0.
 - [Portfolio strategy](AWS%20CloudOps%20_%20DevOps%20Portfolio_%20Three%20Levels%20to%20Job-Ready.md)
 - [Deployment transcript](docs/evidence/level1-deployment-transcript.md) — the first
   real deploy to AWS, with the failures it exposed
+- [Architecture (Level 1)](docs/architecture.md) — the cost-annotated diagram, how to
+  read it, and the live identifiers of what was actually deployed
 - [Network design](docs/network-design.md) · [ADRs](docs/adr) · [Runbooks](docs/runbooks) · [Incidents](docs/incidents)
 - [Security model & threat model](docs/security-and-threat-model.md) — IAM trust
   policies and permissions read back from the deployed stack, plus accepted risks
