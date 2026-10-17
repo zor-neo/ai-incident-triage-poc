@@ -1,0 +1,20 @@
+{
+  "app": "uv run --no-sync python app.py",
+  "context": {
+    "environment": "level1",
+    "bedrockModelId": "amazon.nova-micro-v1:0",
+    "alertEmail": "justin@zorneo.dev"
+  },
+  "output": "cdk.out",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk.out",
+      "cdk*.json",
+      "**/__pycache__",
+      "**/*.pyc"
+    ]
+  },
+  "requireApproval": "never"
+}
