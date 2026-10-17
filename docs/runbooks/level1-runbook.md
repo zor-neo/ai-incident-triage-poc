@@ -25,11 +25,18 @@ uv run --no-sync cdk deploy       # creates/updates the stack
 lab whose change gate is `cdk diff` in review (Level 3). For any environment
 that matters, pass `--require-approval broadening` instead.
 
-First boot takes **3-6 minutes**: the instance installs system packages, builds
+First boot takes **2-5 minutes** (measured: ~2 minutes from instance launch to a
+healthy target in this session): the instance installs system packages, builds
 a venv, installs the pinned lock file, then starts the service. Until it
 finishes, the target is `unhealthy` - this is expected. The ALB unhealthy
 alarm requires ~4-5 minutes of continuous failure before it fires to avoid
 noise during provisioning.
+
+**Application changes replace the instance** (`user_data_causes_replacement=True`,
+ADR 0006). Expect a short window with one bootstrapping target: the old target is
+drained, the new instance registers only after `/health` passes. If a deploy
+reports success but `GET /health` still shows the old `version`, the new code was
+not run - see `docs/incidents/0001-stale-code-after-successful-deploy.md`.
 
 ## 2. Verify
 
@@ -40,6 +47,15 @@ BASE_URL=$(aws cloudformation describe-stacks --stack-name IncidentTriage-level1
 curl -s "$BASE_URL/health"          # {"status":"healthy","version":"<git sha>","environment":"level1"}
 scripts/smoke_test.sh "$BASE_URL"   # end-to-end ingest + redaction check
 open "$BASE_URL/docs"               # FastAPI OpenAPI UI
+```
+
+**A deploy is not finished until `version` matches `git rev-parse --short HEAD`.**
+`UPDATE_COMPLETE` proves the stack matches the template, not that the new code is
+running. Fail the deploy if they differ:
+
+```bash
+DEPLOYED=$(curl -s "$BASE_URL/health" | python -c "import json,sys; print(json.load(sys.stdin)['version'])")
+test "$DEPLOYED" = "$(git rev-parse --short HEAD)" || { echo "STALE DEPLOY: $DEPLOYED != HEAD"; exit 1; }
 ```
 
 ## 3. Troubleshoot a failing target
@@ -97,6 +113,7 @@ Work outside-in; each step narrows the fault domain.
 | `AccessDeniedException` in app log | Instance role missing `bedrock:InvokeModel` for the ARN | Confirm the model ARN in the role's `InvokeTriageModel` statement |
 | Session Manager won't connect | NAT/egress broken or SSM perms missing | Check NAT gateway state and the `SessionManagerAccess` statement |
 | No logs in CloudWatch | Agent not running or wrong log path | `systemctl status amazon-cloudwatch-agent`, check `/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json` |
+| Deploy green but `/health` `version` is old | User data changed without replacing the instance | Confirm `user_data_causes_replacement=True` on `AppInstance` (ADR 0006) |
 
 ## 4. Roll back
 
@@ -120,7 +137,9 @@ manual step with ECS deployment alarms + automatic rollback.
 1. Terminate the instance out of band (EC2 console, or
    `aws ec2 terminate-instances --instance-ids <id>`).
 2. `uv run --no-sync cdk deploy` **does not** recreate it if CloudFormation still
-   believes it exists. Force reconciliation by replacing the resource:
+   believes it exists. Application changes replace the instance (ADR 0006), but a
+   pure out-of-band termination does not change the template, so nothing reconciles
+   it. Force reconciliation by replacing the resource:
    ```bash
    cdk deploy --force                     # or delete just the instance resource
    ```

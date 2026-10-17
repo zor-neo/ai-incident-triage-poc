@@ -106,7 +106,7 @@ cd infra && uv run --no-sync cdk bootstrap && cd ..
 # 4. Preview and deploy
 cd infra
 uv run --no-sync cdk diff
-uv run --no-sync cdk deploy          # ~5 min, first boot installs the app
+uv run --no-sync cdk deploy          # ~4 min; app changes replace the instance
 ```
 
 Then:
@@ -115,8 +115,14 @@ Then:
 BASE_URL=$(aws cloudformation describe-stacks --stack-name IncidentTriage-level1 \
   --query "Stacks[0].Outputs[?OutputKey=='ApplicationUrl'].OutputValue" --output text)
 
-curl -s "$BASE_URL/health"
+curl -s "$BASE_URL/health"           # must show the git SHA you just deployed
 scripts/smoke_test.sh "$BASE_URL"
+```
+
+A deploy is finished only when `/health`'s `version` matches `git rev-parse --short
+HEAD`. `UPDATE_COMPLETE` means the stack matches the template, not that the new
+code is running — the first real deploy of this repo proved that the hard way
+([INC-0001](docs/incidents/0001-stale-code-after-successful-deploy.md)).
 
 curl -s -X POST "$BASE_URL/incidents" -H 'Content-Type: application/json' -d '{
   "service": "payment-worker", "environment": "prod", "severity": "ERROR",
