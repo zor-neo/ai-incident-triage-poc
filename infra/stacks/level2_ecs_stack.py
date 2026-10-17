@@ -606,6 +606,7 @@ class Level2EcsStack(Stack):
                     "ecr:PutImage",
                     "ecr:BatchGetImage",
                     "ecr:GetDownloadUrlForLayer",
+                    "ecr:DescribeRepositories",
                     "ecr:DescribeImages",
                     "ecr:DescribeImageScanFindings",
                 ],
