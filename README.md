@@ -13,9 +13,17 @@ logic is deliberately simple; **the engineering system is the portfolio.**
 
 | Level | What it proves | Compute | Status |
 | :--- | :--- | :--- | :--- |
-| **1 - CloudOps Foundation** | "I can build a secure, repeatable AWS environment and troubleshoot a running application." | EC2 behind an ALB | ✅ **complete and deployed** — live in `us-east-1` while this is being written ([what that costs](#cost--what-is-being-charged-right-now)) |
-| **2 - Delivery Engineer** | "I can build a secure CI/CD pipeline that delivers a containerized service." | ECS on Fargate + GitHub OIDC | ✅ **complete and deployed** — [public repo](https://github.com/zor-neo/ai-incident-triage-poc), pipeline green through a manual production gate |
+| **1 - CloudOps Foundation** | "I can build a secure, repeatable AWS environment and troubleshoot a running application." | EC2 behind an ALB | ✅ **complete** — built, deployed and operated on 2026-10-17, then destroyed ([INC-0001](docs/incidents/0001-stale-code-after-successful-deploy.md), [INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md), [forensics](docs/evidence/level1-access-log-forensics.md)) |
+| **2 - Delivery Engineer** | "I can build a secure CI/CD pipeline that delivers a containerized service." | ECS on Fargate + GitHub OIDC | ✅ **complete** — [public repo](https://github.com/zor-neo/ai-incident-triage-poc), pipeline green through a manual production gate, then destroyed ([INC-0003](docs/incidents/0003-unscannable-image-blocked-the-scan-gate.md), [INC-0004](docs/incidents/0004-bad-release-promoted-to-staging.md)) |
 | **3 - Production-Minded CloudOps** | "I can operate a service with measurable reliability and safe change practices." | ECS + rollout alarms + auto-rollback | ⏳ planned |
+
+> **Current state: nothing is deployed, on purpose.** Both levels were built,
+> deployed, verified against live AWS and then destroyed, so cloning this repository
+> does not leave resources or a bill running. Everything documented here is an
+> observation that was actually made against a live environment, and the evidence
+> (alarm history, CloudTrail records, access logs, task stop reasons) is in
+> [`docs/`](docs). `scripts/cleanup.sh --check` currently reports every
+> project-scoped check empty — that output *is* the teardown evidence.
 
 > **Level 2, in one paragraph.** The same service, now built into an immutable
 > container image tagged with the commit SHA, scanned before it can be promoted,
@@ -26,12 +34,15 @@ logic is deliberately simple; **the engineering system is the portfolio.**
 > database, or change IAM. Deploy paths, rollback and teardown:
 > [`docs/runbooks/level2-runbook.md`](docs/runbooks/level2-runbook.md).
 
-> **Live build note.** The deployed instance answers `GET /health` with
-> `"version": "5d3733a"`. Commits since then changed docs, tests, CI and scripts
-> only — `git diff 5d3733a..HEAD -- app/` is empty — so the running *code* is HEAD,
-> while the reported version still names the commit that last shipped an artifact.
-> A new commit would replace the instance on the next deploy by design
-> ([ADR-0006](docs/adr/0006-replace-instance-on-user-data-change.md)).
+> **Reproducibility was tested, not assumed.** After the first teardown, the whole
+> Level 2 sequence in the runbook was run again **from an empty account** —
+> create the secret, deploy the registry, build and push the image, pass the scan
+> gate, deploy the services, smoke-test both environments — and it came up healthy
+> with the secret injected and the two environments isolated. Wall clock: about
+> 20 minutes, most of it waiting for an ECS service to stabilise, which is inside
+> the "reviewer can deploy it in under 30 minutes" target. It was then destroyed
+> again and the teardown re-verified. The honest caveat is that this is one
+> repetition, on one account, with the CDK bootstrap already present.
 
 ## Architecture (Level 1)
 
@@ -335,8 +346,13 @@ identity is recorded in the deployment history.
 
 ## Cost — what is being charged right now
 
-**The stack is deployed and idle, and four resources bill continuously whether or
-not anyone calls the API.** Idle does not turn the meter off: the clock starts when
+**Right now: nothing.** Both stacks have been destroyed, and
+`scripts/cleanup.sh --check` reports every project-scoped check empty, so the
+hourly burn below has stopped. What follows is what *was* being charged while each
+level was up, and what would be charged again on the next deploy.
+
+**While deployed, four resources bill continuously whether or not anyone calls the
+API.** Idle does not turn the meter off: the clock starts when
 the resource is created and stops only when it is destroyed.
 
 | Resource | Rate (us-east-1, on-demand — read from the AWS Pricing API, 2026-10-17) | Cost if left up |
