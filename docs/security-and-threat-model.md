@@ -115,9 +115,90 @@ uv run pytest tests/infra -q      # asserts no static keys, private instance, SG
 scripts/cleanup.sh --check        # proves no resource outlives a teardown
 ```
 
-## 7. Out of scope here (Level 2 / 3)
+## 7. Out of scope here (Level 3)
 
-Container/non-root hardening and image scanning (L2) · GitHub OIDC instead of human
-credentials (L2) · least-privilege deploy roles per environment (L2) · IAM Access
-Analyzer, AWS Config rules, GuardDuty, WAF, HTTPS (L3) · secrets injected at runtime
-(L2/3) · multi-region trail and KMS CMK for audit data (L3).
+IAM Access Analyzer, AWS Config rules, GuardDuty, WAF, HTTPS via ACM, a
+multi-region trail and a KMS CMK for audit data. (The Level 2 items previously
+listed here — container hardening and image scanning, GitHub OIDC instead of human
+credentials, least-privilege deploy roles, runtime secret injection — are now
+implemented and evidenced in section 8.)
+
+## 8. Level 2: the pipeline-to-production boundary
+
+Level 2 adds a build system, a registry, an orchestrator and a credential that acts
+without a human. That is a new trust boundary, so it gets its own model. Everything
+below was read from the deployed stacks and from live API calls on 2026-10-18.
+
+### 8.1 The four identities, and why none is interchangeable
+
+| Identity | Trusted principal | Can | Explicitly cannot |
+| :--- | :--- | :--- | :--- |
+| `TaskExecutionRole-{staging,prod}` | `ecs-tasks.amazonaws.com` | pull the image from one repository, write to one log group, read **one** SecureString (`kms:Decrypt` constrained by `kms:ViaService`) | touch DynamoDB, invoke Bedrock, push images |
+| `TaskRole-{staging,prod}` | `ecs-tasks.amazonaws.com` | `PutItem`/`GetItem`/`UpdateItem` on its own table, `bedrock:InvokeModel` on one model, `PutMetricData` in one namespace | pull images, write logs, read the secret, `DeleteItem`, `Scan`, `Query` |
+| `incident-triage-level2-github-deploy` | GitHub OIDC (two pinned subjects) | push images, `RegisterTaskDefinition`, `UpdateService` on these two services, `PassRole` for exactly four role ARNs | run CloudFormation, read DynamoDB or Bedrock, change IAM, create users |
+| `admin` (human) | — | everything | is not part of any stack, is not used by the application, and is the only identity that can change infrastructure |
+
+`tests/infra/test_level2_stack.py` asserts the split: the task role's actions
+contain no `ecr:`, `logs:`, `ssm:` or `kms:`, and the deploy role's contain no
+`dynamodb:` and no `bedrock:`.
+
+### 8.2 Verified Level 2 controls
+
+| Control | Evidence (2026-10-18) |
+| :--- | :--- |
+| No long-lived credentials anywhere | zero `AWS::IAM::User` / `AWS::IAM::AccessKey` in either stack; the pipeline authenticates purely by OIDC |
+| OIDC trust is subject-pinned, with no wildcard | `StringLike` lists exactly two GitHub immutable subjects — the deploy branch and the `production` environment ([evidence](evidence/level2-oidc-subject.md)) |
+| `PassRole` blast radius bounded | one `iam:PassRole` statement, 4 explicit role ARNs, conditioned on `iam:PassedToService = ecs-tasks.amazonaws.com` |
+| Images cannot be silently replaced | ECR `ImageTagMutability: IMMUTABLE` + `ScanOnPush: true` |
+| Nothing unscanned is promoted | scan gate blocks HIGH/CRITICAL and **fails closed** on FAILED/UNSUPPORTED/unreadable scans; the only bypass is a dated, owned entry in `security/scan-exceptions.json` |
+| Tasks are private | `AssignPublicIp: DISABLED`; the task SG has exactly one inbound rule, `:8000` from the ALB SG **by reference**, no CIDR |
+| Environments cannot read each other's secret | `staging` key against the prod endpoint → `401`; distinct per-environment SecureStrings |
+| The secret is never in the template | no `AWS::SSM::Parameter` resource exists in the stack; the task definition references an imported ARN |
+| Least privilege is enforced by failure | the first pipeline runs were denied by STS and by `ecr:DescribeRepositories` until the role was given *exactly* what it needed — evidence that the policy is not wider than the job |
+
+### 8.3 Supply chain
+
+- **Build input:** `requirements.lock.hashed.txt`, a full closure with SHA-256
+  hashes installed with `pip install --require-hashes --no-deps`. A substituted
+  wheel fails the build.
+- **Build output:** single image manifest (no attestation index), tagged with the
+  commit SHA (never `latest`), in an immutable repository — so a tag cannot be
+  repointed at different bytes after the fact.
+- **Verification:** ECR basic scanning on push, then the gate. The gate's policy is
+  fail-closed by design; the exceptions file is the explicit, expiring, owned
+  escape hatch ([ADR 0007](adr/0007-hashed-lock-and-single-manifest-image.md)).
+- **Residual:** the base image (`python:3.12-slim`) currently carries three HIGH
+  CVEs (zlib, glibc) for which Debian has **no fixed version** —
+  `apt-cache policy` reports the installed versions as the candidates. They are
+  excepted with reachability arguments and a review date, not ignored. This is the
+  honest state of a Debian-based image in this window.
+
+### 8.4 Risks added at this level
+
+| ID | Scenario | Control now | Residual risk | Next level |
+| :--- | :--- | :--- | :--- | :--- |
+| RISK-12 | A compromised pipeline widens its own access | the deploy role cannot run CloudFormation, change IAM, or read data; `PassRole` is bounded; the OIDC subject is pinned | the pipeline can push an image and deploy it, so it can ship code | short-lived scoped sessions, and a separate production account so the pipeline credential cannot reach prod IAM |
+| RISK-13 | A malicious or careless image is promoted | scan gate (HIGH/CRITICAL, fail-closed), immutable SHA tags, staging deploy + smoke test before the production gate | the gate sees OS packages, not application logic; a smoke test is a contract check, not a security test | signing (cosign) + admission control, and SAST/dependency scanning on the source |
+| RISK-14 | The OIDC trust policy is too permissive, or too brittle | pinned to two immutable subjects, asserted by a test; no wildcard, no classic-name form | *brittle in the other direction* — a repository rename or a new subject format breaks a deploy, as it did twice here | monitor for GitHub subject-format changes; consider an org-level reusable workflow that centralises the trust |
+| RISK-15 | The runtime secret leaks (logs, image, template, task definition) | created out of band, imported not stored, injected via `secrets`, never echoed, `401` across environments, `hmac.compare_digest` comparison | anyone who can read the parameter can read the value; there is no rotation schedule | Secrets Manager with rotation, and CloudTrail alerting on `ssm:GetParameter` against these paths |
+
+### 8.5 Verifying Level 2 yourself
+
+```bash
+# the deploy role's exact trust policy and permissions
+aws iam get-role --role-name incident-triage-level2-github-deploy
+
+# tasks are private and immutable-tagged
+aws ecs describe-services --cluster incident-triage-level2 \
+  --services incident-triage-staging incident-triage-prod
+aws ecr describe-repositories --repository-names incident-triage
+
+# the secret is injected and isolated (expect 200 / 401 / 401)
+KEY=$(aws ssm get-parameter --name /incident-triage/level2/staging/internal-api-key \
+        --with-decryption --query Parameter.Value --output text)
+curl -s -H "X-Internal-Key: $KEY" http://<alb>:8080/internal/config
+curl -s -o /dev/null -w '%{http_code}\n' -H "X-Internal-Key: $KEY" http://<alb>/internal/config
+
+uv run pytest tests/infra -q      # 26 assertions covering all of the above
+scripts/ecr_scan_gate.py incident-triage <tag>   # the supply-chain gate
+```

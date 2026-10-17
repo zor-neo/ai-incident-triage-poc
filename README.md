@@ -14,8 +14,17 @@ logic is deliberately simple; **the engineering system is the portfolio.**
 | Level | What it proves | Compute | Status |
 | :--- | :--- | :--- | :--- |
 | **1 - CloudOps Foundation** | "I can build a secure, repeatable AWS environment and troubleshoot a running application." | EC2 behind an ALB | ✅ **complete and deployed** — live in `us-east-1` while this is being written ([what that costs](#cost--what-is-being-charged-right-now)) |
-| **2 - Delivery Engineer** | "I can build a secure CI/CD pipeline that delivers a containerized service." | ECS on Fargate + GitHub OIDC | ⏳ planned |
+| **2 - Delivery Engineer** | "I can build a secure CI/CD pipeline that delivers a containerized service." | ECS on Fargate + GitHub OIDC | ✅ **complete and deployed** — [public repo](https://github.com/zor-neo/ai-incident-triage-poc), pipeline green through a manual production gate |
 | **3 - Production-Minded CloudOps** | "I can operate a service with measurable reliability and safe change practices." | ECS + rollout alarms + auto-rollback | ⏳ planned |
+
+> **Level 2, in one paragraph.** The same service, now built into an immutable
+> container image tagged with the commit SHA, scanned before it can be promoted,
+> and run as two Fargate services (staging and prod) behind one ALB. Releases go
+> through GitHub Actions authenticated by **OIDC — there are no long-lived AWS keys
+> anywhere** — and production sits behind a required-reviewer gate. The pipeline
+> holds only the power to move an artifact: it cannot run CloudFormation, read the
+> database, or change IAM. Deploy paths, rollback and teardown:
+> [`docs/runbooks/level2-runbook.md`](docs/runbooks/level2-runbook.md).
 
 > **Live build note.** The deployed instance answers `GET /health` with
 > `"version": "5d3733a"`. Commits since then changed docs, tests, CI and scripts
@@ -76,6 +85,42 @@ Full network and security detail: [`docs/network-design.md`](docs/network-design
 [`docs/adr/`](docs/adr). The same diagram with a walk-through of the flows and the live
 resource inventory lives in [`docs/architecture.md`](docs/architecture.md).
 
+### Architecture (Level 2)
+
+Delivery changes; the application does not. What is new is that an artifact is built
+once, verified, and then promoted by a pipeline that holds no long-lived credentials.
+
+```mermaid
+flowchart LR
+  Dev["Developer"] -->|pull request| GH["GitHub"]
+  GH --> Checks["ruff · bandit · pytest · cdk synth + cdk-nag"]
+  Checks --> Build["docker build<br/>linux/amd64 · single manifest"]
+  Build -->|"tag = commit SHA"| ECR[("ECR · IMMUTABLE<br/>scan on push")]
+  ECR --> Gate{"scan gate<br/>HIGH/CRITICAL?"}
+  Gate -->|blocked| Stop["pipeline stops"]
+  Gate -->|clean or excepted| Stg["ECS Fargate staging :8080"]
+  Stg --> Smoke["smoke test"]
+  Smoke --> Approve{"production approval<br/>required reviewer"}
+  Approve -->|approved| Prod["ECS Fargate prod :80"]
+  Prod --> Smoke2["smoke test"]
+  GH -.->|OIDC token, no static keys| Role["deploy role<br/>push image + move service<br/>nothing else"]
+  Role --> ECR
+  Role --> Stg
+  Role --> Prod
+  Stg --> ALB["ALB · :80 prod / :8080 staging"]
+  Prod --> ALB
+
+  classDef burns fill:#3a1d1d,stroke:#ff6b6b,stroke-width:2px,color:#fff
+  classDef free fill:#1d3a24,stroke:#6bff8f,stroke-width:2px,color:#fff
+  classDef gate fill:#1d2b3a,stroke:#6bb8ff,stroke-width:2px,color:#fff
+  class ECR,Stg,Prod,ALB burns
+  class Role free
+  class Gate,Approve gate
+```
+
+The full Level 2 diagram, its cost annotations, the live resource inventory, and the
+three-role split are in [`docs/architecture.md`](docs/architecture.md#level-2--containerised-delivery).
+
 ## What the service does
 
 - `POST /incidents` — accepts a service, environment, severity, and raw error
@@ -117,10 +162,16 @@ Every `error_log` is scrubbed before it reaches logs, DynamoDB, or Bedrock:
 ```text
 app/        FastAPI service (routers, sanitizer, Bedrock client, DynamoDB repo)
 tests/      unit/ (moto + stubbed Bedrock), infra/ (CDK assertions), smoke/ (live)
-infra/      AWS CDK (Python): app.py, cdk.json, stacks/level1_ec2_stack.py
-docs/       adr/, runbooks/, incidents/, network-design.md, security-and-threat-model.md
-scripts/    smoke_test.sh, cleanup.sh  (deliverables, referenced below)
-scripts/adhoc/  one-off session scripts (SSM drills, probes, deploy verification)
+infra/      AWS CDK (Python): app.py, cdk.json, stacks/level1_ec2_stack.py,
+            stacks/level2_ecs_stack.py (registry + ECS Fargate services)
+docs/       adr/, runbooks/, incidents/, evidence/, network-design.md,
+            architecture.md, security-and-threat-model.md
+scripts/    cleanup.sh, smoke_test.sh, level2_bootstrap.sh, deploy_ecs_image.py,
+            ecr_scan_gate.py  (deliverables, referenced below)
+scripts/adhoc/  one-off session scripts (SSM drills, probes, rollback lab)
+security/   scan-exceptions.json (time-boxed, owned CVEs the gate lets through)
+Dockerfile  multi-stage, non-root (UID 10001), hashed dependency install
+.github/    ci.yml (PR gate, also called by the pipeline) + pipeline.yml (delivery)
 ```
 
 ## Prerequisites
@@ -184,6 +235,40 @@ scripts/cleanup.sh --check    # verification only, destroys nothing (safe to run
 project-scoped section should list its live resources; after a teardown the same
 sections must all read `none`. Region-wide inventory is printed separately and
 never fails the run, because this account also hosts earlier labs.
+
+Level 2 has one extra step because the secret is deliberately not CDK's to delete:
+
+```bash
+scripts/level2_bootstrap.sh --delete   # removes the out-of-band SSM parameters
+```
+
+## Deploying Level 2
+
+The full procedure, including the ordering constraint, is in
+[`docs/runbooks/level2-runbook.md`](docs/runbooks/level2-runbook.md). The short
+version, and the order matters:
+
+```bash
+scripts/level2_bootstrap.sh                 # 1. the out-of-band secret (ADR 0010)
+cd infra && cdk deploy IncidentTriage-level2-registry && cd ..
+                                            # 2. the registry must exist first...
+SHA=$(git rev-parse --short HEAD)
+docker build --platform linux/amd64 --provenance=false --sbom=false -t "$URI:$SHA" .
+docker push "$URI:$SHA"                     # 3. ...before an image can be pushed...
+uv run --no-sync python scripts/ecr_scan_gate.py incident-triage "$SHA"
+cd infra && cdk deploy IncidentTriage-level2 -c imageTag="$SHA"
+                                            # 4. ...before a service can pull one
+```
+
+Then merge to `main` and let the pipeline take over. The four ordering steps are not
+ceremony: a stack that creates the repository and the service together cannot be
+deployed at all the first time, because CloudFormation waits for a service to
+stabilise and the image it needs can only be pushed after the repository exists
+([ADR 0008](docs/adr/0008-registry-stack-and-two-fargate-services.md)).
+
+Notifications into the pipeline are real: the `production` Environment requires a
+reviewer, so a release is *paused* until a human approves it, and the approving
+identity is recorded in the deployment history.
 
 ## Testing
 
@@ -260,7 +345,23 @@ the resource is created and stops only when it is destroyed.
 | NAT gateway | $0.045/hr, plus $0.045 per GB processed | $32.85/mo |
 | EC2 `t4g.small` | $0.0168/hr (billed per second, 60s minimum) | $12.26/mo |
 | EBS `gp3` 8 GB | $0.08/GB-month | $0.64/mo |
-| **Total while idle** | **$0.0852/hr** | **≈$62/mo · $2.04/day** |
+| **Public IPv4 addresses (3)** | $0.005/hr **each** — 1 on the NAT gateway, 2 as ALB node addresses | $10.95/mo |
+| **Total while idle** | **$0.1002/hr** | **≈$73/mo · $2.40/day** |
+
+**Level 2 adds a second, independent environment:**
+
+| Resource | Rate | Cost if left up |
+| :--- | :--- | ---: |
+| 2 × Fargate task, 0.25 vCPU / 0.5 GiB | $0.04048/vCPU-hr + $0.004445/GB-hr | $17.98/mo |
+| ALB (second one, carries both environments) | $0.0225/hr + LCU | $16.43/mo |
+| NAT gateway | $0.045/hr + $0.045/GB | $32.85/mo |
+| Public IPv4 addresses (3: 1 NAT + 2 ALB) | $0.005/hr each | $10.95/mo |
+| ECR storage | ~$0.10/GB-month (308 MB image, ~6 tags) | ~$0.20/mo |
+| **Total while idle** | **$0.108/hr** | **≈$79/mo · $2.60/day** |
+
+**Both levels idle together: ≈ $0.208/hr ≈ $5/day ≈ $152/month.** That is the
+number to have in mind before leaving either stack up; `scripts/cleanup.sh` is what
+ends it.
 
 Everything else is usage-based or free while idle, because it was chosen that way:
 
@@ -270,14 +371,22 @@ Everything else is usage-based or free while idle, because it was chosen that wa
   would have added $0.01/hr each (~$15/mo) for the same private access.
 - **EBS encryption uses the AWS-managed `aws/ebs` key**, not a customer-managed KMS
   key, saving the ~$1/mo CMK charge.
-- The **internet gateway**, the **elastic IP attached to the NAT gateway**, the
-  **first CloudTrail management-events trail**, the **first two AWS Budgets**, and
-  **SNS email** are all free; the 5 custom metrics and 3 alarms sit inside the
-  always-free allowances.
+- The **internet gateway**, the **first CloudTrail management-events trail**, the
+  **first two AWS Budgets**, and **SNS email** are all free; the alarms and custom
+  metrics sit inside the always-free allowances.
+- **Public IPv4 addresses are not free, and this is easy to get wrong.** Since
+  1 February 2024 AWS bills **$0.005/hr for every public IPv4 address**, attached or
+  not — which for these stacks means the NAT gateway's Elastic IP *and* the ALB's
+  per-AZ node addresses. An earlier version of this section claimed the NAT's
+  address was free; it was wrong, and the correction is worth ~$11/month here.
+  Note this is the **published rate**: Cost Explorer had not posted any
+  EC2/VPC line items when this was written, so it is arithmetic from the rate, not
+  an observed charge. Treat `USE1-PublicIPv4:InUseAddress` on the bill as the
+  confirmation.
 - **Usage-based and measured, tiny here:** Bedrock per-token (a real triage used 200
   input + 57 output tokens, ~$0.0001), NAT data processing, ALB LCUs, CloudWatch
-  Logs ingestion at $0.50/GB with 7-day retention (~cents/day at this volume), and a
-  few MB of S3 logs.
+  Logs ingestion at $0.50/GB with 7-day retention (~cents/day at this volume), ECR
+  storage, and a few MB of S3 logs.
 
 **What the account itself reports:** Cost Explorer has posted **$0.00** for October
 (billing line items lag the usage by hours), and its forecast for the month is
@@ -299,22 +408,31 @@ bucket are intentionally left behind and cost ~$0.
 
 ## Roadmap
 
-- **Level 2:** multi-stage non-root Docker image → ECR (immutable commit-SHA
-  tags, scan on push) → ECS Fargate staging + prod, GitHub Actions with OIDC,
-  smoke tests, manual production approval.
-- **Level 3:** modular CDK constructs per environment, ECS deployment alarms
-  with automatic rollback, dashboards, EventBridge deployment events,
-  IAM Access Analyzer, AWS Config rules, documented game-day exercises and DR.
+- **Level 2 — done.** Multi-stage non-root Docker image → ECR (immutable commit-SHA
+  tags, scan on push) → ECS Fargate staging + prod behind one ALB, GitHub Actions
+  with OIDC, smoke tests, and a required-reviewer production gate. Deployed, and the
+  pipeline has run end to end. Two things it deliberately does *not* do yet:
+  automatic rollback, and any logging/metrics beyond logs plus ALB alarms.
+- **Level 3:** modular CDK constructs per environment, ECS deployment alarms with
+  automatic rollback (the circuit breaker's rollback flag is currently off — see
+  [INC-0004](docs/incidents/0004-bad-release-promoted-to-staging.md) for why it is
+  the obvious next control), dashboards, EventBridge deployment events, container
+  insights, IAM Access Analyzer, AWS Config rules, HTTPS via ACM, and documented
+  game-day exercises with a DR decision.
 
 ## Documentation
 
 - [Product Requirements](product_requirements_document.md)
 - [Technical & Architectural Specification](technical_and_architectural_specification.md)
 - [Portfolio strategy](AWS%20CloudOps%20_%20DevOps%20Portfolio_%20Three%20Levels%20to%20Job-Ready.md)
-- [Deployment transcript](docs/evidence/level1-deployment-transcript.md) — the first
-  real deploy to AWS, with the failures it exposed
-- [Architecture (Level 1)](docs/architecture.md) — the cost-annotated diagram, how to
-  read it, and the live identifiers of what was actually deployed
+- [Deployment transcript (Level 1)](docs/evidence/level1-deployment-transcript.md) —
+  the first real deploy to AWS, with the failures it exposed
+- [Architecture](docs/architecture.md) — cost-annotated diagrams for both levels, how
+  to read them, and the live identifiers of what was actually deployed
+- [Level 2 runbook](docs/runbooks/level2-runbook.md) — deploy, verify, roll back,
+  game day, cost, teardown
+- [OIDC evidence](docs/evidence/level2-oidc-subject.md) — the exact subject claim the
+  deploy role must trust, read from CloudTrail
 - [Network design](docs/network-design.md) · [ADRs](docs/adr) · [Runbooks](docs/runbooks) · [Incidents](docs/incidents)
 - [Security model & threat model](docs/security-and-threat-model.md) — IAM trust
   policies and permissions read back from the deployed stack, plus accepted risks

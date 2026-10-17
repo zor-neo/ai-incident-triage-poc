@@ -19,6 +19,7 @@ nothing here was invented after the fact.
 | `drill_ai_unavailable.sh` | Validating graceful degradation in production | 202 persisted + `TriageFallback`, then a revert to 201 | yes — edits the EnvironmentFile over SSM in seconds instead of deploying twice; restores on every exit path, including Ctrl-C |
 | `verify_alert_path.sh` | 2026-10-17, after the owner confirmed the SNS email subscription | subscription is a real ARN, not `PendingConfirmation` (the INC-0002 finding) | yes — the incident's "permanent corrective action", as a command |
 | `alb_access_log_report.py` | 2026-10-18, to audit INC-0002's published latencies against primary evidence | the `describe-alarm-history`-and-access-log reconciliation that corrected v2/v3; and the scanner traffic (128-request phpMyAdmin sweep, MCP/SSE discovery) | yes — reads the ALB's own logs; the only client-side truth |
+| `rollback_lab.sh` | 2026-10-18, the Level 2 "bad release" game day ([INC-0004](../incidents/0004-bad-release-promoted-to-staging.md)) | staging served the whole time; the alarm fired; ECS killed the task with `Task failed ELB health checks`; rollback took ~4 min | yes — the only scripted proof that a bad release costs a failed deployment, not an outage |
 
 Deliberately **not** here: `scripts/cleanup.sh` and `scripts/smoke_test.sh`. Those are
 first-class deliverables referenced by the README and the runbook, so they live in
