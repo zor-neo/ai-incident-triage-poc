@@ -93,7 +93,11 @@ jobs:
     name: deploy + verify staging
     needs: build-and-scan
     runs-on: ubuntu-latest
-    environment: staging
+    # Deliberately no `environment:` here. Attaching one rewrites the OIDC
+    # subject to `...:environment:staging`, which the deploy role does not trust -
+    # staging is authorised by the branch claim (a push to main), and only
+    # production carries an Environment, because only production needs an
+    # approval gate. Adding `environment: staging` here is a silent 401.
     permissions:
       contents: read
       id-token: write
