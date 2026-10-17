@@ -47,6 +47,40 @@ REGION="${AWS_REGION:-us-east-1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRESENT=0
 
+# `uv` runs the CDK app (infra/cdk.json's "app" command), and it is frequently not
+# on PATH in the shell that runs this script - a Windows install under
+# /mnt/c/Users/*/AppData/Roaming/Python/Python3*/Scripts is invisible to WSL, and a
+# WSL install is invisible to PowerShell. That is not fatal: the destroy step is
+# verified against CloudFormation and falls back to the CloudFormation API, which
+# needs only the AWS CLI. Using `cdk destroy` when it is available keeps the
+# documented path, and the verification keeps it honest when it is not.
+uv_search_paths=(
+  "$HOME/.local/bin"
+  "$HOME/.cargo/bin"
+  /mnt/c/Users/*/AppData/Roaming/Python/Python3*/Scripts
+  /c/Users/*/AppData/Roaming/Python/Python3*/Scripts
+)
+CDK_CMD=()
+if ! command -v uv >/dev/null 2>&1; then
+  for candidate in "${uv_search_paths[@]}"; do
+    if [ -x "$candidate/uv" ] || [ -x "$candidate/uv.exe" ]; then
+      export PATH="$PATH:$candidate"
+      break
+    fi
+  done
+fi
+if command -v uv >/dev/null 2>&1; then
+  CDK_CMD=(uv run --no-sync cdk)
+else
+  echo "note: 'uv' is not on PATH; destroying through the CloudFormation API instead"
+  echo "      (identical effect - the removal policies are already in the templates)"
+fi
+
+stack_status() {
+  aws cloudformation describe-stacks --stack-name "$1" --region "$REGION" \
+    --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo ABSENT
+}
+
 # Destroy order matters: the services stack references the registry's image, so the
 # services go first, then the registry that holds the images, then Level 1.
 ALL_STACKS=(IncidentTriage-level2 IncidentTriage-level2-registry IncidentTriage-level1)
@@ -60,8 +94,40 @@ if [ "$MODE" = "destroy" ]; then
   fi
   for stack in "${STACKS[@]}"; do
     echo "== destroying $stack in $REGION =="
-    ( cd "$SCRIPT_DIR/../infra" && uv run --no-sync cdk destroy "$stack" --force ) || \
-      echo "   ($stack was already absent or failed to destroy - continuing)"
+    if [ "${#CDK_CMD[@]}" -gt 0 ]; then
+      ( cd "$SCRIPT_DIR/../infra" && "${CDK_CMD[@]}" destroy "$stack" --force ) || true
+    fi
+    status="$(stack_status "$stack")"
+    if [ "$status" != "ABSENT" ]; then
+      echo "   CDK did not remove it (state: $status) - deleting via the CloudFormation API"
+      aws cloudformation delete-stack --stack-name "$stack" --region "$REGION"
+      aws cloudformation wait stack-delete-complete --stack-name "$stack" --region "$REGION" || true
+      status="$(stack_status "$stack")"
+    fi
+    if [ "$status" = "ABSENT" ]; then
+      echo "   $stack: gone"
+  # Task definition revisions registered by the pipeline (scripts/deploy_ecs_image.py)
+  # are NOT owned by CloudFormation, so deleting the stack deregisters only the
+  # revisions CDK created - the pipeline's stay ACTIVE. They cost nothing, but they
+  # are the same class of leftover as the SSM secret: created outside the stack, so
+  # the stack cannot clean them up. Deregister them here.
+  echo
+  echo "== deregistering task definition revisions created outside CloudFormation =="
+  deregistered=0
+  for family in incident-triage-staging incident-triage-prod; do
+    for arn in $(aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE \
+        --region "$REGION" --query 'taskDefinitionArns[]' --output text 2>/dev/null || true); do
+      if aws ecs deregister-task-definition --task-definition "$arn" \
+           --region "$REGION" >/dev/null 2>&1; then
+        echo "   deregistered $arn"
+        deregistered=$((deregistered + 1))
+      fi
+    done
+  done
+  [ "$deregistered" -gt 0 ] || echo "   none"
+else
+      echo "   WARNING: $stack still exists in state $status"
+    fi
   done
 
   # The Level 2 secret is created out of band (ADR 0010), so no stack owns it and
@@ -102,9 +168,20 @@ report() {
 # flatten text output and drop terminated-instance noise (they linger ~1h)
 flat() { tr '\t' '\n' | { grep -v ':instance/' || true; } | tr '\n' ' '; }
 
+# The tagging API is eventually consistent: it keeps reporting deleted resources for
+# minutes (sometimes longer). Types that already have an authoritative direct check
+# below are therefore filtered out of the catch-all tag check - otherwise a teardown
+# looks like a leak because of an index that has not caught up. Everything the tag
+# check still reports is a genuine leftover, and every resource type it can see
+# without a dedicated check has been verified this way.
+COVERED_TYPES=':(task-definition|service|cluster|natgateway|vpc-endpoint)/'
+flat_tags() {
+  tr '\t' '\n' | { grep -v ':instance/' || true; } | { grep -Ev "$COVERED_TYPES" || true; } | tr '\n' ' '
+}
+
 report "tagged Project=IncidentTriage" "$(aws resourcegroupstaggingapi get-resources --region "$REGION" \
   --tag-filters Key=Project,Values=IncidentTriage \
-  --query "ResourceTagMappingList[].ResourceARN" --output text 2>/dev/null | flat)"
+  --query "ResourceTagMappingList[].ResourceARN" --output text 2>/dev/null | flat_tags)"
 report "NAT gateways" "$(aws ec2 describe-nat-gateways --region "$REGION" \
   --filter Name=tag:Project,Values=IncidentTriage Name=state,Values=available,pending \
   --query "NatGateways[].NatGatewayId" --output text 2>/dev/null | flat)"
@@ -142,6 +219,9 @@ report "ECS services (ACTIVE)" "$(aws ecs list-clusters --region "$REGION" \
   done | tr '\t' '\n' | grep -v '^$' | tr '\n' ' ' || true)"
 report "ECS task definitions (ACTIVE)" "$(aws ecs list-task-definition-families --region "$REGION" \
   --status ACTIVE --query "families[?contains(@, 'incident-triage')]" --output text 2>/dev/null | flat)"
+report "VPC endpoints" "$(aws ec2 describe-vpc-endpoints --region "$REGION" \
+  --query "VpcEndpoints[?contains(Tags[?Key=='Project'].Value | [0], 'IncidentTriage')].VpcEndpointId" \
+  --output text 2>/dev/null | flat)"
 report "ECR repositories" "$(aws ecr describe-repositories --region "$REGION" \
   --query "repositories[?repositoryName=='incident-triage'].repositoryName" --output text 2>/dev/null | flat)"
 report "SSM parameters (out-of-band)" "$(aws ssm describe-parameters --region "$REGION" \
