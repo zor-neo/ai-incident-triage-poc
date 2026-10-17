@@ -6,7 +6,7 @@
     "bedrockModelId": "amazon.nova-micro-v1:0",
     "alertEmail": "justin@zorneo.dev",
     "repositoryName": "incident-triage",
-    "githubRepo": "zor-neo/ai-incident-triage-poc",
+    "githubRepoSubject": "zor-neo@240544755/ai-incident-triage-poc@1423586245",
     "githubBranch": "main"
   },
   "output": "cdk.out",

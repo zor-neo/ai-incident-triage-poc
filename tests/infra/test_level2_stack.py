@@ -16,7 +16,7 @@ from aws_cdk import assertions
 
 from infra.stacks.level2_ecs_stack import Level2EcsStack, Level2RegistryStack
 
-GITHUB_REPO = "zor-neo/ai-incident-triage-poc"
+GITHUB_REPO_SUBJECT = "zor-neo@240544755/ai-incident-triage-poc@1423586245"
 GITHUB_BRANCH = "main"
 IMAGE_TAG = "abc1234"
 SECRET_PATH = "/incident-triage/level2/staging/internal-api-key"
@@ -46,7 +46,7 @@ def template() -> assertions.Template:
         git_sha="testsha",
         image_tag=IMAGE_TAG,
         repository_name="incident-triage",
-        github_repo=GITHUB_REPO,
+        github_repo_subject=GITHUB_REPO_SUBJECT,
         github_branch=GITHUB_BRANCH,
         alert_email="ops@example.com",
         env=cdk.Environment(account="123456789012", region="us-east-1"),
@@ -278,8 +278,8 @@ def test_deploy_trust_is_scoped_to_this_repo_branch_and_environment(template: as
 
     subjects = conditions["StringLike"]["token.actions.githubusercontent.com:sub"]
     subjects = subjects if isinstance(subjects, list) else [subjects]
-    assert f"repo:{GITHUB_REPO}:ref:refs/heads/{GITHUB_BRANCH}" in subjects
-    assert f"repo:{GITHUB_REPO}:environment:production" in subjects
+    assert f"repo:{GITHUB_REPO_SUBJECT}:ref:refs/heads/{GITHUB_BRANCH}" in subjects
+    assert f"repo:{GITHUB_REPO_SUBJECT}:environment:production" in subjects
     # No unqualified wildcard that would let any repository in.
     assert not any(s.endswith(":*") or s == "*" for s in subjects)
     assert not any("repo:*" in s for s in subjects)
@@ -359,3 +359,4 @@ def test_no_static_credentials_anywhere(template: assertions.Template):
     template.resource_count_is("AWS::IAM::AccessKey", 0)
     body = str(template.to_json())
     assert "AKIA" not in body
+

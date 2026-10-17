@@ -137,7 +137,7 @@ class Level2EcsStack(Stack):
         git_sha: str,
         image_tag: str,
         repository_name: str,
-        github_repo: str,
+        github_repo_subject: str,
         github_branch: str,
         alert_email: str | None = None,
         **kwargs,
@@ -572,10 +572,16 @@ class Level2EcsStack(Stack):
                     # another repo, another branch, a PR from a fork - cannot
                     # assume this role. An unrestricted `sub` is the documented
                     # way GitHub OIDC goes wrong.
+                    #
+                    # The subject carries GitHub's *immutable* entity ids
+                    # (`owner@ownerId/repo@repoId`), not the classic `owner/repo`.
+                    # An earlier version of this policy used the classic form and
+                    # was denied by STS; the real claim is recorded from
+                    # CloudTrail in docs/evidence/level2-oidc-subject.md.
                     "StringLike": {
                         f"{GITHUB_OIDC_URL}:sub": [
-                            f"repo:{github_repo}:ref:refs/heads/{github_branch}",
-                            f"repo:{github_repo}:environment:production",
+                            f"repo:{github_repo_subject}:ref:refs/heads/{github_branch}",
+                            f"repo:{github_repo_subject}:environment:production",
                         ]
                     },
                 },

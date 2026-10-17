@@ -17,7 +17,8 @@ Context values (all optional, set in cdk.json or via ``-c key=value``):
   gitSha             version string surfaced by GET /health (default: local git HEAD)
   repositoryName     ECR repository name for the Level 2 image (default: incident-triage)
   imageTag           image tag the Level 2 task definitions start on (default: gitSha)
-  githubRepo         owner/repo allowed to assume the deploy role (default: below)
+  githubRepoSubject  OIDC subject allowed to assume the deploy role, in GitHub's
+                     immutable form `owner@ownerId/repo@repoId` (default: below)
   githubBranch       deploy branch allowed to assume the deploy role (default: main)
 """
 
@@ -58,8 +59,14 @@ git_sha: str = app.node.try_get_context("gitSha") or _git_sha()
 
 repository_name: str = app.node.try_get_context("repositoryName") or "incident-triage"
 image_tag: str = app.node.try_get_context("imageTag") or git_sha
-github_repo: str = (
-    app.node.try_get_context("githubRepo") or "zor-neo/ai-incident-triage-poc"
+# The OIDC subject is `owner@ownerId/repo@repoId` - GitHub's immutable form.
+# Find yours with:
+#   aws cloudtrail lookup-events --lookup-attributes \
+#     AttributeKey=EventName,AttributeValue=AssumeRoleWithWebIdentity
+# and read userIdentity.userName, or from the OIDC token's `sub` claim.
+github_repo_subject: str = (
+    app.node.try_get_context("githubRepoSubject")
+    or "zor-neo@240544755/ai-incident-triage-poc@1423586245"
 )
 github_branch: str = app.node.try_get_context("githubBranch") or "main"
 
@@ -96,7 +103,7 @@ Level2EcsStack(
     git_sha=git_sha,
     image_tag=image_tag,
     repository_name=repository_name,
-    github_repo=github_repo,
+    github_repo_subject=github_repo_subject,
     github_branch=github_branch,
     alert_email=alert_email,
     env=env,
