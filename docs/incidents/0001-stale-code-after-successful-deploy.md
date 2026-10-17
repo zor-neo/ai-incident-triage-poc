@@ -147,3 +147,13 @@ $ curl -s "$BASE_URL/health"
   in the stack looked unattached. The decisive fact was not the launch template at
   all, but that CloudFormation's documented `UserData` behavior is "restart", and
   restarting an instance does not re-run cloud-init user data.
+
+**Resolved later (2026-10-17):** the unattached-LaunchTemplate observation was a
+red herring *and* harmless. `describe-instances` still reports `LaunchTemplate:
+null` for the live instance, yet the IMDSv2 control is in force regardless —
+`MetadataOptions: {HttpTokens: "required", HttpPutResponseHopLimit: 2, State:
+"applied"}`. The template's `AWS::EC2::LaunchTemplate` carries only
+`MetadataOptions.HttpTokens`, and that setting is applied to the instance even
+though no template ARN is attached. Lesson recorded: verify the *effect*
+(`MetadataOptions`), not the *mechanism* (a template reference), and prefer an
+assertion on the observable state.

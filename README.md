@@ -213,3 +213,6 @@ stack creates a **$10 monthly AWS Budget** with 80%-actual and
 - [Deployment transcript](docs/evidence/level1-deployment-transcript.md) — the first
   real deploy to AWS, with the failures it exposed
 - [Network design](docs/network-design.md) · [ADRs](docs/adr) · [Runbooks](docs/runbooks) · [Incidents](docs/incidents)
+- [Security model & threat model](docs/security-and-threat-model.md) — IAM trust
+  policies and permissions read back from the deployed stack, plus accepted risks
+  (no API auth, HTTP-only, shared asset bucket) and the Level 2/3 fixes for each
