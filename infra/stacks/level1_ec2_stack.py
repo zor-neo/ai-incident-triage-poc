@@ -406,6 +406,7 @@ class Level1Ec2Stack(Stack):
             security_group=app_sg,
             role=instance_role,
             require_imdsv2=True,
+            user_data_causes_replacement=True,
             detailed_monitoring=False,
             block_devices=[
                 ec2.BlockDevice(
