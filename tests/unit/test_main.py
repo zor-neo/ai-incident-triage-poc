@@ -8,7 +8,7 @@ from app.bedrock_client import TriageUnavailable
 from app.config import Settings
 from app.main import create_app
 from app.metrics import MetricsEmitter
-from app.models import TriageMetrics
+from app.models import AiTriage, TriageMetrics
 from app.repository import FALLBACK_MESSAGE, IncidentRepository
 
 VALID_KEY = "AKIAIOSFODNN7EXAMPLE"
@@ -55,6 +55,37 @@ def test_post_incident_triaged_and_redacted(settings, repo, fake_triage):
     stored = repo.get(body["incident_id"])
     assert stored["status"] == "TRIAGED"
     assert fake_triage.calls[0]["error_log"] == body["sanitized_log"]
+
+
+def test_incident_is_persisted_as_pending_before_the_ai_call(settings, repo):
+    """FR-03: the sanitized row is durable and PENDING_TRIAGE before Bedrock runs."""
+    observed: dict = {}
+
+    class ObservingTriage:
+        def triage(self, **kwargs):
+            observed["rows"] = repo._table.scan()["Items"]
+            observed["prompt_log"] = kwargs["error_log"]
+            return (
+                AiTriage(summary="s", probable_cause="c", first_action="a"),
+                TriageMetrics(ai_latency_ms=1, input_tokens=2, output_tokens=3),
+            )
+
+    payload = {
+        "service": "payment-worker",
+        "environment": "prod",
+        "severity": "ERROR",
+        "error_log": f"AccessDenied for key {VALID_KEY}",
+    }
+    with _client(settings, repo, ObservingTriage(), _metrics(settings)) as client:
+        response = client.post("/incidents", json=payload)
+
+    assert response.status_code == 201
+    rows = observed["rows"]
+    assert len(rows) == 1, "the in-flight incident must already be stored"
+    assert rows[0]["status"] == "PENDING_TRIAGE"
+    assert rows[0]["incident_id"] == response.json()["incident_id"]
+    assert rows[0]["sanitized_log"] == observed["prompt_log"]
+    assert VALID_KEY not in observed["prompt_log"]
 
 
 def test_post_incident_degrades_when_triage_unavailable(settings, repo):
