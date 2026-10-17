@@ -20,6 +20,10 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ECR_REPOSITORY: incident-triage
   CLUSTER_NAME: incident-triage-level2
+  # BuildKit attaches provenance/SBOM attestations by default, which turns the
+  # push into an OCI image *index* - and ECR refuses to scan an index
+  # (INC-0003). Single-platform manifest only.
+  BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
 
 jobs:
   # ---------------------------------------------------------------- tests
@@ -69,7 +73,9 @@ jobs:
 
       - name: build the amd64 image
         run: |
-          docker build --platform linux/amd64 \
+          # --provenance=false --sbom=false: see BUILDX_NO_DEFAULT_ATTESTATIONS
+          # above and INC-0003 - an attested index cannot be scanned by ECR.
+          docker build --platform linux/amd64 --provenance=false --sbom=false \
             -t "${registry}/${ECR_REPOSITORY}:${{ steps.vars.outputs.image_tag }}" .
 
       - name: push the commit-SHA tag (never :latest)

@@ -14,8 +14,14 @@
 #   * arm64/amd64 neutrality: the image is built for an explicit platform
 #     (--platform linux/amd64) so the identical image runs on Fargate.
 #
-# Build:  docker build --platform linux/amd64 -t ai-incident-triage:local .
+# Build:  docker build --platform linux/amd64 --provenance=false --sbom=false \
+#             -t ai-incident-triage:local .
 # Run:    docker run --rm -p 8000:8000 --env-file .env.docker ai-incident-triage:local
+#
+# --provenance=false --sbom=false is not optional for ECR: BuildKit's default
+# attestations make the push an OCI image *index*, and ECR refuses to scan an
+# index (UnsupportedImageTypeException), which stops the pipeline at the scan
+# gate. See docs/incidents/0003-unscannable-image-blocked-the-scan-gate.md.
 # ---------------------------------------------------------------------------
 
 # --- Stage 1: build the virtualenv from the hashed lock ---------------------

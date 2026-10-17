@@ -25,6 +25,33 @@ BLOCKING = ("CRITICAL", "HIGH")
 TERMINAL_OK = {"COMPLETE"}
 TERMINAL_BAD = {"FAILED", "UNSUPPORTED"}
 
+# ECR cannot scan these. An OCI image *index* is what `docker build` produces by
+# default when BuildKit attaches provenance/SBOM attestations, which is why the
+# build must pass --provenance=false --sbom=false (INC-0003).
+UNSCANNABLE_MEDIA_TYPES = {
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+}
+ACCEPTED_MEDIA_TYPES = [
+    *sorted(UNSCANNABLE_MEDIA_TYPES),
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+]
+
+
+def manifest_media_type(ecr, repository: str, tag: str) -> str | None:
+    """The stored manifest's media type, or None if it cannot be read."""
+    try:
+        response = ecr.batch_get_image(
+            repositoryName=repository,
+            imageIds=[{"imageTag": tag}],
+            acceptedMediaTypes=ACCEPTED_MEDIA_TYPES,
+        )
+    except ClientError:
+        return None
+    images = response.get("images", [])
+    return images[0].get("imageManifestMediaType") if images else None
+
 
 def scan_state(ecr, repository: str, tag: str) -> tuple[str, dict, list[dict]]:
     """Return (scan status, severity counts, findings) for one image tag."""
@@ -66,11 +93,28 @@ def main() -> int:
     ecr = boto3.client("ecr", region_name=args.region)
 
     deadline = time.monotonic() + args.timeout
+    started = time.monotonic()
     status, counts, findings = "PENDING", {}, []
     while time.monotonic() < deadline:
         status, counts, findings = scan_state(ecr, args.repository, args.tag)
         if status in TERMINAL_OK or status in TERMINAL_BAD:
             break
+        # No scan is ever going to appear for an unscannable artifact. Detect it
+        # by reading the stored manifest rather than waiting out the full
+        # timeout and reporting a vague "did not complete" 15 minutes later.
+        if time.monotonic() - started > 45:
+            media_type = manifest_media_type(ecr, args.repository, args.tag)
+            if media_type in UNSCANNABLE_MEDIA_TYPES:
+                print(f"FAIL: {args.repository}:{args.tag} was pushed as {media_type}")
+                print(
+                    "      ECR cannot scan an OCI image index (this is what BuildKit "
+                    "produces when it attaches provenance/SBOM attestations)."
+                )
+                print(
+                    "      Build with: docker build --platform linux/amd64 "
+                    "--provenance=false --sbom=false"
+                )
+                return 1
         print(f"scan of {args.repository}:{args.tag} is {status}; waiting...")
         time.sleep(args.interval)
 
