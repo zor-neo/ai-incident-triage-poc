@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON: "3.12"
+
+jobs:
+  checks:
+    name: lint, SAST, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv python install
+      - run: uv sync --frozen --all-groups
+
+      - name: ruff
+        run: uv run ruff check app tests infra
+
+      - name: bandit (SAST)
+        run: uv run bandit -q -r app
+
+      - name: pytest (unit + CDK template assertions)
+        run: uv run pytest
+
+  infra-synth:
+    name: cdk synth + cdk-nag
+    runs-on: ubuntu-latest
+    env:
+      # synth performs no AWS calls: the AMI is an SSM dynamic reference and the
+      # AZ lookup is cached in infra/cdk.context.json (the check below fails if a
+      # change introduces an uncached lookup, which is a genuine trap for CI).
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+      CDK_DEFAULT_ACCOUNT: "685134815483"
+      CDK_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: uv python install
+      - run: uv sync --frozen --all-groups
+
+      - run: npm install -g aws-cdk@2
+
+      # app.py applies AwsSolutionsChecks; an unacknowledged nag finding is an
+      # error annotation and fails synthesis, so this step is the security gate.
+      - name: cdk synth (fails on unacknowledged cdk-nag findings)
+        working-directory: infra
+        run: cdk synth --quiet

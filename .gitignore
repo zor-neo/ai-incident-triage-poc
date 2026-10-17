@@ -32,4 +32,5 @@ Thumbs.db
 
 # Logs / local artifacts
 *.log
-evidence/
+# Raw capture scratch space (kept out of the repo); reviewed evidence lives in docs/evidence/
+/evidence/

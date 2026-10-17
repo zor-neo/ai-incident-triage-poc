@@ -99,7 +99,8 @@ uv sync --all-groups
 uv run ruff check app tests infra
 uv run pytest                       # unit + infra assertions
 uv run bandit -q -r app             # SAST
-
+# CI (.github/workflows/ci.yml) runs these three plus `cdk synth`, where cdk-nag
+# fails the build on any finding that is not explicitly acknowledged in the stack.
 # 3. One-time per account/region
 cd infra && uv run --no-sync cdk bootstrap && cd ..
 
@@ -203,4 +204,6 @@ stack creates a **$10 monthly AWS Budget** with 80%-actual and
 - [Product Requirements](product_requirements_document.md)
 - [Technical & Architectural Specification](technical_and_architectural_specification.md)
 - [Portfolio strategy](AWS%20CloudOps%20_%20DevOps%20Portfolio_%20Three%20Levels%20to%20Job-Ready.md)
+- [Deployment transcript](docs/evidence/level1-deployment-transcript.md) — the first
+  real deploy to AWS, with the failures it exposed
 - [Network design](docs/network-design.md) · [ADRs](docs/adr) · [Runbooks](docs/runbooks) · [Incidents](docs/incidents)
