@@ -215,3 +215,30 @@ def test_all_resources_are_tagged(template: assertions.Template):
     assert tags["Project"] == "IncidentTriage"
     assert tags["Environment"] == "level1"
     assert tags["ManagedBy"] == "AWSCDK"
+
+
+def test_detection_latency_is_bounded(template: assertions.Template):
+    # Measured 6m44s to alert with a 30s/3-threshold health check and a 3-datapoint
+    # alarm (INC-0002). These values cap detection at ~2.5 minutes: 45s for the ALB
+    # to mark the target unhealthy, then two 60s alarm datapoints.
+    template.has_resource_properties(
+        "AWS::ElasticLoadBalancingV2::TargetGroup",
+        {
+            "HealthCheckIntervalSeconds": 15,
+            "UnhealthyThresholdCount": 3,
+            "HealthyThresholdCount": 2,
+        },
+    )
+    template.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {
+            "AlarmName": "TestStack-alb-unhealthy-targets",
+            "MetricName": "UnHealthyHostCount",
+            "Namespace": "AWS/ApplicationELB",
+            "Period": 60,
+            "EvaluationPeriods": 2,
+            "DatapointsToAlarm": 2,
+            "Threshold": 1,
+            "TreatMissingData": "notBreaching",
+        },
+    )
