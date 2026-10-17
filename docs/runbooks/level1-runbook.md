@@ -158,9 +158,19 @@ alerts is created by the stack.
 
 ```bash
 scripts/cleanup.sh                # cdk destroy + orphan check
+scripts/cleanup.sh --check        # orphan check only - destroys nothing
 ```
 
-After it finishes, the orphan check sections must print nothing.
+After a real teardown, every project-scoped section must print nothing (the script
+exits non-zero if any does). `--check` run while the stack is up is the way to
+prove the checks work at all: each section should list its live resource, which is
+exactly the evidence that the check is wired to the right API.
+
+`CDKToolkit` and its asset bucket are intentionally retained so future deploys are
+fast; delete them only to fully de-bootstrap the account/region. Terminated EC2
+instances stay visible to the tagging API for roughly an hour after a replacement,
+which is why the tag check ignores instance ARNs and instance state is asserted
+separately.
 
 ## 7. Game day checklist
 

@@ -134,8 +134,14 @@ curl -s -X POST "$BASE_URL/incidents" -H 'Content-Type: application/json' -d '{
 ### Tear down (do this when the lab session ends)
 
 ```bash
-scripts/cleanup.sh        # cdk destroy + orphan verification
+scripts/cleanup.sh            # cdk destroy + orphan verification (non-zero exit on a leak)
+scripts/cleanup.sh --check    # verification only, destroys nothing (safe to run anytime)
 ```
+
+`--check` also **verifies the verifier**: run it while the stack is up and every
+project-scoped section should list its live resources; after a teardown the same
+sections must all read `none`. Region-wide inventory is printed separately and
+never fails the run, because this account also hosts earlier labs.
 
 ## Testing
 
