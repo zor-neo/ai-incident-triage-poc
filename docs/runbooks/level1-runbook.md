@@ -164,10 +164,24 @@ After it finishes, the orphan check sections must print nothing.
 
 ## 7. Game day checklist
 
-Run these from memory, in order, without looking at the runbook:
+Run these from memory, in order, without looking at the runbook. Timings below are
+the ones measured on 2026-10-17 (`docs/incidents/0002-*`) - treat them as
+expectations to verify, not as fixed constants.
 
-1. Break the health check (`systemctl stop incident-triage`), confirm the ALB
-   target goes unhealthy and the alarm fires, then restore and confirm recovery.
+**Prerequisite: the alert path must be confirmed before any of this means anything.**
+```bash
+aws sns list-subscriptions-by-topic \
+  --topic-arn arn:aws:sns:us-east-1:<account>:IncidentTriage-alerts-level1 \
+  --query "Subscriptions[].{EP:Endpoint,ARN:SubscriptionArn}"
+```
+`SubscriptionArn` must be a real ARN, **not `PendingConfirmation`**. If it is
+pending, click the AWS confirmation email first - otherwise every alarm is silent.
+
+1. Break the health check (`systemctl stop incident-triage` via SSM RunCommand),
+   confirm the ALB target goes `unhealthy` in **~60s**, the
+   `IncidentTriage-level1-alb-unhealthy-targets` alarm reaches `ALARM` in
+   **~1.5 min**, and an email arrives. Restore and confirm recovery in **~45s**.
+   Measured before tuning: 78s to `unhealthy`, 6m44s to `ALARM`, 0 alerts delivered.
 2. Force `AI_UNAVAILABLE` (point `BEDROCK_MODEL_ID` at a non-existent model,
    restart) and confirm the API still returns `202` and stores the incident.
 3. Deny one narrowly scoped permission (remove `dynamodb:GetItem`) and confirm

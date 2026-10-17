@@ -53,8 +53,18 @@ Set **`user_data_causes_replacement=True`** on `AppInstance` (commit `5e04ba0`).
   documented rather than engineered away.
 - Rollback semantics stay simple and honest: the previous SHA is a redeploy, not a
   restore of a stopped instance.
-- Infrastructure-only changes (alarms, buckets, IAM) still update in place; only
-  user-data changes (i.e. application changes) trigger replacement.
+- **Every commit now replaces the instance**, not just application commits. The
+  deployed commit SHA is embedded in user data (it is the `version` served by
+  `/health`), so a docs-only or alarm-only commit changes user data and triggers a
+  replacement too. Cost of a replacement is ~2 minutes; the instance id and launch
+  time change on every deploy. This is accepted: it makes "which build is running"
+  unambiguous at the cost of churn. A finer-grained alternative (version the
+  instance by the application *asset* hash only, and report the SHA from a separate
+  mechanism) is deliberately not taken at Level 1 - it would weaken the guarantee
+  that `/health` names the exact deployed commit.
+- Infra-only resources that are not part of user data (alarms, buckets, IAM, the
+  target group) still update in place; the instance is the only resource that
+  churns.
 - `docs/runbooks/level1-runbook.md` §2 makes `GET /health` version verification a
   mandatory post-deploy step, because the version endpoint - not `cdk`'s exit
   code - is the evidence that a deploy shipped.

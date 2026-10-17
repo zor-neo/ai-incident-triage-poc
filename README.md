@@ -169,8 +169,18 @@ scripts/cleanup.sh        # cdk destroy + orphan verification
   the alert SNS topic.
 - Custom business metrics: `TriageSuccess`, `TriageFallback`
   (and `TriageFallbackByReason`), `BedrockLatencyMs`, `TokensUsed`.
+- **Measured, not assumed.** A deliberate `systemctl stop` fault injection showed
+  the target going `unhealthy` in 58s and the alarm firing **6m44s** later, with
+  zero alerts delivered (the SNS subscription was `PendingConfirmation`). After
+  tuning (15s health check, alarm on the first datapoint) the same fault pages in
+  **1m25s** and clears in 43s — see
+  [INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md).
 - Runbook and game-day checklist: [`docs/runbooks/level1-runbook.md`](docs/runbooks/level1-runbook.md).
-- Incident reports: [`docs/incidents/`](docs/incidents).
+- Incident reports, written from live first-hand evidence:
+  [`docs/incidents/`](docs/incidents) —
+  [INC-0001](docs/incidents/0001-stale-code-after-successful-deploy.md) (a green
+  `cdk deploy` that shipped nothing) and
+  [INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md).
 
 ## Cost
 
