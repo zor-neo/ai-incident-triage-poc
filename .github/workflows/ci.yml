@@ -1,9 +1,11 @@
 name: ci
 
+# The quality gate. Runs on every pull request, and is called by pipeline.yml so
+# that a push to main executes exactly the same checks rather than a copy of them.
+
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read

@@ -1,0 +1,158 @@
+name: pipeline
+
+# Level 2 delivery pipeline: test -> build -> scan -> stage -> verify -> approve -> promote.
+#
+# Authenticates to AWS with GitHub OIDC only. There are no long-lived AWS keys in
+# this repository or in GitHub: the workflow exchanges its short-lived OIDC token
+# for the incident-triage-level2-github-deploy role, whose trust policy is pinned
+# to this repository, this branch, and the `production` environment.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON: "3.12"
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REPOSITORY: incident-triage
+  CLUSTER_NAME: incident-triage-level2
+
+jobs:
+  # ---------------------------------------------------------------- tests
+  # Same gate a pull request gets, reused rather than copied.
+  checks:
+    name: lint, SAST, tests, synth
+    uses: ./.github/workflows/ci.yml
+
+  # ------------------------------------------------- build, push, scan gate
+  build-and-scan:
+    name: build image, push, scan gate
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required to request the OIDC token
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        name: derive the immutable image tag
+        run: echo "image_tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-build-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen --all-groups
+
+      - name: log in to ECR
+        run: |
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          registry="${account}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "registry=${registry}" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$registry"
+
+      - name: build the amd64 image
+        run: |
+          docker build --platform linux/amd64 \
+            -t "${registry}/${ECR_REPOSITORY}:${{ steps.vars.outputs.image_tag }}" .
+
+      - name: push the commit-SHA tag (never :latest)
+        run: |
+          docker push "${registry}/${ECR_REPOSITORY}:${{ steps.vars.outputs.image_tag }}"
+
+      - name: scan gate - block HIGH/CRITICAL
+        run: |
+          uv run --no-sync python scripts/ecr_scan_gate.py \
+            "$ECR_REPOSITORY" "${{ steps.vars.outputs.image_tag }}" \
+            --region "$AWS_REGION" --timeout 900
+
+  # ----------------------------------------------------------- staging
+  deploy-staging:
+    name: deploy + verify staging
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen --all-groups
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-staging-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: deploy ${{ needs.build-and-scan.outputs.image_tag }} to staging
+        run: |
+          uv run --no-sync python scripts/deploy_ecs_image.py \
+            --service incident-triage-staging \
+            --image-tag "${{ needs.build-and-scan.outputs.image_tag }}" \
+            --cluster "$CLUSTER_NAME" --region "$AWS_REGION" --timeout 600
+
+      - name: smoke test staging
+        run: scripts/smoke_test.sh "${{ vars.STAGING_BASE_URL }}"
+
+  # ------------------------------------ promotion gate (manual approval)
+  promote-production:
+    name: promote to production
+    needs: [build-and-scan, deploy-staging]
+    runs-on: ubuntu-latest
+    # The `production` GitHub Environment carries required reviewers, so this job
+    # pauses until a human approves. It is also the only subject besides the
+    # deploy branch that the OIDC trust policy accepts.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen --all-groups
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-prod-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: deploy the exact staging-verified tag to production
+        run: |
+          uv run --no-sync python scripts/deploy_ecs_image.py \
+            --service incident-triage-prod \
+            --image-tag "${{ needs.build-and-scan.outputs.image_tag }}" \
+            --cluster "$CLUSTER_NAME" --region "$AWS_REGION" --timeout 600
+
+      - name: smoke test production
+        run: scripts/smoke_test.sh "${{ vars.PROD_BASE_URL }}"
