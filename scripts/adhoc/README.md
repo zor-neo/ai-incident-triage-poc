@@ -16,7 +16,8 @@ nothing here was invented after the fact.
 | `verify_deploy.sh` | After all 5 deploys (the `/health` gate that caught INC-0001) | `version` == deployed commit, or a loud mismatch | yes — the deploy is not finished until this passes |
 | `metrics_probe.sh` | Verifying the custom metrics exist and carry the right dimensions | `TriageSuccess`, `BedrockLatencyMs`, `TokensUsed`, `TriageFallback(+ByReason{client_error})` | yes — includes the dimension gotcha that made a good metric look missing |
 | `triage_probe.sh` | Capturing live 201 / 202 behaviour for the README and transcript | a real Bedrock triage (201) and a persisted degraded incident (202) | yes — a one-incident version of the smoke test with the stored row printed |
-| `drill_ai_unavailable.sh` | Validating graceful degradation in production | 202 + `AI_UNAVAILABLE` + `TriageFallback`, then a revert to 201 | **careful** — it deploys twice; guarded by `--confirm-degradation` |
+| `drill_ai_unavailable.sh` | Validating graceful degradation in production | 202 persisted + `TriageFallback`, then a revert to 201 | yes — edits the EnvironmentFile over SSM in seconds instead of deploying twice; restores on every exit path, including Ctrl-C |
+| `verify_alert_path.sh` | 2026-10-17, after the owner confirmed the SNS email subscription | subscription is a real ARN, not `PendingConfirmation` (the INC-0002 finding) | yes — the incident's "permanent corrective action", as a command |
 
 Deliberately **not** here: `scripts/cleanup.sh` and `scripts/smoke_test.sh`. Those are
 first-class deliverables referenced by the README and the runbook, so they live in

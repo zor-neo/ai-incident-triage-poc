@@ -180,12 +180,14 @@ expectations to verify, not as fixed constants.
 
 **Prerequisite: the alert path must be confirmed before any of this means anything.**
 ```bash
-aws sns list-subscriptions-by-topic \
-  --topic-arn arn:aws:sns:us-east-1:<account>:IncidentTriage-alerts-level1 \
-  --query "Subscriptions[].{EP:Endpoint,ARN:SubscriptionArn}"
+scripts/adhoc/verify_alert_path.sh          # exits non-zero while a subscription is pending
+scripts/adhoc/verify_alert_path.sh --publish   # also sends one test notification
 ```
-`SubscriptionArn` must be a real ARN, **not `PendingConfirmation`**. If it is
-pending, click the AWS confirmation email first - otherwise every alarm is silent.
+`SubscriptionArn` must be a real ARN, **not `PendingConfirmation`** (the script
+checks exactly that). Confirmed on 2026-10-17; if it is ever pending again, click
+the AWS confirmation email before drilling - otherwise every alarm is silent, which
+is precisely how [INC-0002](../incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)
+went unnoticed through a full fault drill.
 
 Each step below is scripted in [`scripts/adhoc/`](../../scripts/adhoc/README.md) so
 it can be re-run rather than retyped: `instance_ssm.sh` drives step 1, and
@@ -196,7 +198,9 @@ behind `--confirm-degradation`).
    confirm the ALB target goes `unhealthy` in **~60s**, the
    `IncidentTriage-level1-alb-unhealthy-targets` alarm reaches `ALARM` in
    **~1.5 min**, and an email arrives. Restore and confirm recovery in **~45s**.
-   Measured before tuning: 78s to `unhealthy`, 6m44s to `ALARM`, 0 alerts delivered.
+   Measured before tuning: 78s to `unhealthy`, 6m44s to `ALARM`, 0 alerts delivered
+   (the subscription was still unconfirmed). **After 2026-10-17 the last one is the
+   one to watch for: an alarm that fires with no email means the path broke again.**
 2. Force `AI_UNAVAILABLE` (point `BEDROCK_MODEL_ID` at a non-existent model,
    restart) and confirm the API still returns `202` and stores the incident.
    Measured 2026-10-17: `202 AI_UNAVAILABLE` in 54ms with the incident persisted

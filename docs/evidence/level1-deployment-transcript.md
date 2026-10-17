@@ -193,6 +193,13 @@ $ aws sns list-subscriptions-by-topic --topic-arn arn:...:IncidentTriage-alerts-
 
 See [INC-0002](../incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md).
 
+> **Postscript (later the same day).** The owner confirmed the subscription:
+> `list-subscriptions-by-topic` now yields a real `SubscriptionArn`
+> (`…:3803e2c5-…`), and an `aws sns publish` test (MessageId `40efef95-…`) was
+> sent. Alarm and AWS Budget notifications now have somewhere to land, and
+> `scripts/adhoc/verify_alert_path.sh` fails if any subscription is ever pending
+> again. The transcript above is unchanged: at the time, nothing was delivered.
+
 ## 11. Graceful degradation, verified in production
 
 ```

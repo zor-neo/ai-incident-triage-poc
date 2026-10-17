@@ -45,7 +45,7 @@ flowchart LR
     CWL["CloudWatch Logs + 5 custom metrics + 3 alarms<br/>$0.50/GB ingest · 7-day retention"]
     S3[("S3: ALB access logs + CloudTrail<br/>pennies")]
     CT["CloudTrail<br/>management events<br/>first trail $0"]
-    SNS["SNS alerts + budget notices<br/>email subscription PendingConfirmation"]
+    SNS["SNS alerts + budget notices<br/>email subscription confirmed 2026-10-17"]
     BUD["AWS Budget: $10<br/>80% actual / 100% forecasted"]
   end
 
@@ -219,11 +219,14 @@ never fails the run, because this account also hosts earlier labs.
 - Custom business metrics: `TriageSuccess`, `TriageFallback`
   (and `TriageFallbackByReason`), `BedrockLatencyMs`, `TokensUsed`.
 - **Measured, not assumed.** A deliberate `systemctl stop` fault injection showed
-  the target going `unhealthy` in 58s and the alarm firing **6m44s** later, with
-  zero alerts delivered (the SNS subscription was `PendingConfirmation`). After
-  tuning (15s health check, alarm on the first datapoint) the same fault pages in
-  **1m25s** and clears in 43s — see
-  [INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md).
+  the target going `unhealthy` in 58s and the alarm firing **6m44s** later — and
+  exposed a second, worse problem: **zero alerts were delivered**, because the SNS
+  email subscription was still `PendingConfirmation`. After tuning (15s health
+  check, alarm on the first datapoint) the same fault pages in **1m25s** and clears
+  in 43s. The subscription is confirmed now, and the path is checked by
+  `scripts/adhoc/verify_alert_path.sh` instead of trusted — see
+  [INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)
+  (status: **resolved**).
 - Runbook and game-day checklist: [`docs/runbooks/level1-runbook.md`](docs/runbooks/level1-runbook.md).
 - Incident reports, written from live first-hand evidence:
   [`docs/incidents/`](docs/incidents) —
@@ -268,11 +271,13 @@ Everything else is usage-based or free while idle, because it was chosen that wa
 **$10 monthly budget** (80% actual, 100% forecasted) reads `HEALTHY`, `ActualSpend
 0.0`, `ForecastedSpend 2.098`.
 
-> ⚠️ Those budget notifications ride the alert SNS topic whose only subscriber is
-> still `PendingConfirmation` ([INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)) —
-> so **the budget is currently a silent guardrail**, exactly like the alarms. At
-> $2.04/day the forecast would cross the $10 threshold after roughly five days
-> uptime; confirming that email is what turns all of this into a real signal.
+> **The guardrail is now armed.** Budget notifications ride the same alert SNS
+> topic as the CloudWatch alarms, so both were silent while the email subscription
+> sat in `PendingConfirmation` ([INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)).
+> The subscription was confirmed on 2026-10-17, so at $2.04/day the forecasted-spend
+> notification will genuinely reach the owner within about five days of uptime
+> instead of dying at the topic. Verify any time with
+> `scripts/adhoc/verify_alert_path.sh`.
 
 `scripts/cleanup.sh` destroys the stack and then asserts nothing project-scoped
 survived, so the hourly burn ends with the teardown. `CDKToolkit` and its asset

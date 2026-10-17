@@ -17,6 +17,24 @@ the notification could not be delivered at all: the SNS email subscription is in
 datapoint and the health check interval is halved; the same fault now pages in
 **1m25s**.
 
+## Status: **resolved** (both findings) — 2026-10-17
+
+- **Detection latency:** fixed and asserted by a test (1m25s, was 6m44s).
+- **Delivery:** the owner confirmed the SNS email subscription at ~23:40 local.
+  `list-subscriptions-by-topic` now returns a real `SubscriptionArn`
+  (`…:3803e2c5-…`) instead of `PendingConfirmation`, and a one-off
+  `aws sns publish` (MessageId `40efef95-…`) was sent as a delivery test. The
+  stack's alarms **and** its AWS Budget both notify this topic, so both were dark
+  and are now live.
+- **So the check cannot be forgotten again,** it is now a script rather than a
+  paragraph: `scripts/adhoc/verify_alert_path.sh` exits non-zero while any
+  subscription is `PendingConfirmation`. The deployment verification checklist in
+  `.github/pull_request_template.md` carries the same item for alarm/SNS changes.
+
+The narrative below is left exactly as written at the time — the point of the
+incident record is that the path was assumed and unverified, not that it was
+eventually fixed.
+
 ## Timeline (UTC) - three iterations of the same fault
 
 | Iteration | Break | Target `unhealthy` | Alarm `ALARM` | MTTD | Alarm back `OK` after restore |
@@ -123,8 +141,10 @@ if anyone re-lengthens the detection path.
 - Level 2/3: replace email with a machine-consumable channel (SNS→Lambda→Slack/PagerDuty)
   whose subscription cannot be pending, and add an alarm on the *alerting path*
   itself (e.g. an alarm for zero ALARM-state transitions during a fault test).
-- Owner: repo owner. Outstanding user action: **click the AWS confirmation email
-  sent to `justin@zorneo.dev`**, otherwise every alarm in this stack is decorative.
+- Owner: repo owner. User action taken: **the AWS confirmation email sent to
+  `justin@zorneo.dev` was clicked** (see Status above); until that happened, every
+  alarm in this stack was decorative. Re-check any time with
+  `scripts/adhoc/verify_alert_path.sh`.
 
 ## What I got wrong
 

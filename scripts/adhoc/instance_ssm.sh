@@ -29,7 +29,11 @@
 # HOW TO RUN
 #   STACK=IncidentTriage-level1 ./instance_ssm.sh status
 #   Subcommands: status | stop-service | start-service | version | logs [N]
-#                | user-data | target-health
+#                | user-data | target-health | raw "<shell command>"
+#
+#   `raw` is the escape hatch (used by drill_ai_unavailable.sh to edit
+#   /etc/incident-triage.env). SSM runs it as root, so it can do anything the
+#   instance can - it is an operator tool, not a safe-by-default one.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -82,6 +86,7 @@ case "${1:-}" in
   version)       run_ssm "curl -s -m 3 http://127.0.0.1:8000/health" ;;
   logs)          run_ssm "journalctl -u $UNIT -n ${2:-30} --no-pager" ;;
   user-data)     run_ssm "tail -n 40 /var/log/cloud-init-output.log" ;;
+  raw)           shift; run_ssm "$*" ;;
   target-health)
     aws elbv2 describe-target-health --region "$REGION" \
       --target-group-arn "$(aws elbv2 describe-target-groups --region "$REGION" \

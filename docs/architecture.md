@@ -21,7 +21,7 @@ flowchart LR
     CWL["CloudWatch Logs + 5 custom metrics + 3 alarms<br/>$0.50/GB ingest · 7-day retention"]
     S3[("S3: ALB access logs + CloudTrail<br/>pennies")]
     CT["CloudTrail<br/>management events<br/>first trail $0"]
-    SNS["SNS alerts + budget notices<br/>email subscription PendingConfirmation"]
+    SNS["SNS alerts + budget notices<br/>email subscription confirmed 2026-10-17"]
     BUD["AWS Budget: $10<br/>80% actual / 100% forecasted"]
   end
 
@@ -63,10 +63,12 @@ flowchart LR
 - **Everything leaves a trail.** CloudTrail records management events, the ALB writes
   access logs to S3, and the app writes structured JSON logs with `request_id`
   correlation to a 7-day log group.
-- **The weak link is the alert path, not the data path.** Both the alarms and the AWS
-  Budget notify an SNS topic whose only email subscriber is still
-  `PendingConfirmation`, so today nothing pages anyone
-  ([INC-0002](incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)).
+- **The alert path was the weak link; it is now armed and checkable.** Both the
+  alarms and the AWS Budget notify an SNS topic whose only email subscriber sat in
+  `PendingConfirmation` from the first deploy, so nothing paged anyone — including
+  through a real fault drill ([INC-0002](incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)).
+  The subscription is confirmed, and `scripts/adhoc/verify_alert_path.sh` fails
+  loudly if any subscription is ever pending again, so this cannot silently return.
 
 ## What was actually deployed
 
@@ -84,7 +86,7 @@ get-template` / `describe-*`), not from the source:
 | Model | Bedrock `amazon.nova-micro-v1:0` |
 | Logs | `/aws/ec2/incident-triage` (7-day retention) |
 | Metrics | namespace `IncidentTriage`, dimension `Environment=level1` |
-| Alerts | SNS topic `IncidentTriage-alerts-level1`, subscription `PendingConfirmation` |
+| Alerts | SNS topic `IncidentTriage-alerts-level1`, email subscription **confirmed** 2026-10-17 (was `PendingConfirmation` — [INC-0002](incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)) |
 | Audit | CloudTrail `IncidentTriage-level1` + `incidenttriage-level1-*` S3 buckets |
 
 Cost and billing detail: [README § Cost](../README.md#cost--what-is-being-charged-right-now).
