@@ -219,8 +219,9 @@ def test_all_resources_are_tagged(template: assertions.Template):
 
 def test_detection_latency_is_bounded(template: assertions.Template):
     # Measured 6m44s to alert with a 30s/3-threshold health check and a 3-datapoint
-    # alarm (INC-0002). These values cap detection at ~2.5 minutes: 45s for the ALB
-    # to mark the target unhealthy, then two 60s alarm datapoints.
+    # alarm (INC-0002), then 4m55s with 2 datapoints. The ALB health check is the
+    # debounce (3 consecutive failures at 15s), so the alarm fires on the first
+    # confirmed datapoint instead of adding a second debounce stage.
     template.has_resource_properties(
         "AWS::ElasticLoadBalancingV2::TargetGroup",
         {
@@ -236,8 +237,8 @@ def test_detection_latency_is_bounded(template: assertions.Template):
             "MetricName": "UnHealthyHostCount",
             "Namespace": "AWS/ApplicationELB",
             "Period": 60,
-            "EvaluationPeriods": 2,
-            "DatapointsToAlarm": 2,
+            "EvaluationPeriods": 1,
+            "DatapointsToAlarm": 1,
             "Threshold": 1,
             "TreatMissingData": "notBreaching",
         },

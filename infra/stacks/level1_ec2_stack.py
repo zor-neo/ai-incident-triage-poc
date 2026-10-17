@@ -465,8 +465,8 @@ class Level1Ec2Stack(Stack):
             metric=target_group.metrics.unhealthy_host_count(period=Duration.minutes(1)),
             threshold=1,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            evaluation_periods=2,
-            datapoints_to_alarm=2,
+            evaluation_periods=1,
+            datapoints_to_alarm=1,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="One or more ALB targets failed the /health check",
         )
