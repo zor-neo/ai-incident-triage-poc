@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Post-deployment smoke test for the AI Incident & Log Triage API.
 #
+# WHEN THIS WAS USED
+#   After every one of the five deploys on 2026-10-17, and as the acceptance step
+#   in docs/runbooks/level1-runbook.md §2. It ran against the live ALB each time
+#   and is the reason the redaction of `secret:<path>` (INC-0001) was caught and
+#   then verified fixed.
+#
 # Verifies the full ingestion path against a live environment:
 #   1. GET  /health       -> 200 with the deployed version
 #   2. POST /incidents    -> 201 (TRIAGED) or 202 (AI_UNAVAILABLE, degraded)

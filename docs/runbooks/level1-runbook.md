@@ -187,6 +187,11 @@ aws sns list-subscriptions-by-topic \
 `SubscriptionArn` must be a real ARN, **not `PendingConfirmation`**. If it is
 pending, click the AWS confirmation email first - otherwise every alarm is silent.
 
+Each step below is scripted in [`scripts/adhoc/`](../../scripts/adhoc/README.md) so
+it can be re-run rather than retyped: `instance_ssm.sh` drives step 1, and
+`drill_ai_unavailable.sh` automates step 2 (it deploys twice, so it is guarded
+behind `--confirm-degradation`).
+
 1. Break the health check (`systemctl stop incident-triage` via SSM RunCommand),
    confirm the ALB target goes `unhealthy` in **~60s**, the
    `IncidentTriage-level1-alb-unhealthy-targets` alarm reaches `ALARM` in

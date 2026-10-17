@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # FinOps teardown and orphan verification for the Level 1 stack.
 #
+# WHEN THIS WAS USED / WHY IT LOOKS LIKE THIS
+#   2026-10-17: written at the end of the build session. `--check` was run while
+#   the stack was still up, which is the only way to prove the checks actually
+#   see the live resources (they must find 10 populated sections then, and none
+#   after a destroy). That first run also exposed two bugs in this script that
+#   would otherwise have produced a FALSE LEAK after teardown: a subshell that
+#   swallowed the leak counter, and a filter that matched `/instance/` when ARNs
+#   read `:instance/`. The current form is the tested one.
+#
 # Usage:
 #   scripts/cleanup.sh                # destroy the stack, then verify no orphans (exit 1 on a leak)
 #   scripts/cleanup.sh --check        # verification only, destroys nothing (safe while the stack is up)
