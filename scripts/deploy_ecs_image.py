@@ -110,6 +110,26 @@ def main() -> int:
         return 1
     image_uri = f"{repository['repositoryUri']}:{args.image_tag}"
 
+    # Fail in two seconds if the tag was never pushed. Without this guard the
+    # mistake surfaces four minutes later as CannotPullContainerError, a circuit
+    # breaker trip, a CloudFormation rollback and a stack that then has to be
+    # deleted before it can be deployed again.
+    try:
+        ecr.describe_images(
+            repositoryName=args.repository,
+            imageIds=[{"imageTag": args.image_tag}],
+        )
+    except ClientError:
+        print(f"FAIL: {args.repository}:{args.image_tag} does not exist in ECR.")
+        print("      Build and push it first, or pass the tag that was actually pushed:")
+        recent = ecr.describe_images(
+            repositoryName=args.repository,
+            filter={"tagStatus": "TAGGED"},
+        )["imageDetails"]
+        tags = sorted(t for i in recent for t in i.get("imageTags", []))
+        print(f"      tags in the repository: {', '.join(tags) or '(none)'}")
+        return 1
+
     family = args.service
     previous = latest_task_definition(ecs, family)
     print(f"deploying {args.service}")
