@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     metrics_namespace: str = "IncidentTriage"
 
+    # Level 2: injected at runtime from SSM Parameter Store (SecureString) into the
+    # ECS task definition - never baked into the image, never in the repo. It gates
+    # GET /internal/config, which is how the injection is proven end to end.
+    internal_api_key: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

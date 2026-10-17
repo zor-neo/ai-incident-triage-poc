@@ -2,8 +2,12 @@
   "app": "uv run --no-sync python app.py",
   "context": {
     "environment": "level1",
+    "level2Environment": "level2",
     "bedrockModelId": "amazon.nova-micro-v1:0",
-    "alertEmail": "justin@zorneo.dev"
+    "alertEmail": "justin@zorneo.dev",
+    "repositoryName": "incident-triage",
+    "githubRepo": "zor-neo/ai-incident-triage-poc",
+    "githubBranch": "main"
   },
   "output": "cdk.out",
   "watch": {

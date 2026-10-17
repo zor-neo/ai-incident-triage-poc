@@ -6,6 +6,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 from typing import Any
 
 import structlog
@@ -231,6 +232,39 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse(
             status="healthy", version=settings.git_sha, environment=settings.environment
+        )
+
+    @app.get("/internal/config", include_in_schema=False)
+    def internal_config(request: Request) -> JSONResponse:
+        """Prove runtime secret injection.
+
+        The endpoint only exists when INTERNAL_API_KEY is set. In Level 2 that
+        value is never in the image or the repo: the ECS task definition pulls it
+        from an SSM SecureString at task start (spec section 6.2). Returning the
+        non-secret runtime config here is how the SSM -> task -> process chain is
+        verified from outside, and the key itself is never echoed back.
+        """
+        if not settings.internal_api_key:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "internal config endpoint is not enabled"},
+            )
+        supplied = request.headers.get("X-Internal-Key", "")
+        if not compare_digest(supplied, settings.internal_api_key):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "invalid or missing X-Internal-Key"},
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "environment": settings.environment,
+                "table_name": settings.table_name,
+                "bedrock_model_id": settings.bedrock_model_id,
+                "metrics_namespace": settings.metrics_namespace,
+                "git_sha": settings.git_sha,
+                "internal_api_key_source": "injected_at_runtime",
+            },
         )
 
     return app

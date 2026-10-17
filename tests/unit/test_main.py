@@ -144,3 +144,28 @@ def test_invalid_payload_is_rejected(settings, repo, fake_triage):
     with _client(settings, repo, fake_triage, _metrics(settings)) as client:
         response = client.post("/incidents", json={"service": "svc"})
     assert response.status_code == 422
+
+
+def test_internal_config_is_absent_without_a_key(settings, repo, fake_triage):
+    """No INTERNAL_API_KEY injected -> the endpoint does not exist (no auth bypass)."""
+    with _client(settings, repo, fake_triage, _metrics(settings)) as client:
+        response = client.get("/internal/config")
+    assert response.status_code == 404
+
+
+def test_internal_config_requires_the_injected_key(settings, repo, fake_triage):
+    injected = settings.model_copy(update={"internal_api_key": "s3cret-from-ssm"})
+    with _client(injected, repo, fake_triage, _metrics(injected)) as client:
+        missing = client.get("/internal/config")
+        wrong = client.get("/internal/config", headers={"X-Internal-Key": "nope"})
+        ok = client.get("/internal/config", headers={"X-Internal-Key": "s3cret-from-ssm"})
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["internal_api_key_source"] == "injected_at_runtime"
+    assert body["table_name"] == settings.table_name
+    assert body["environment"] == "test"
+    # The secret itself must never be reflected back.
+    assert "s3cret-from-ssm" not in ok.text
