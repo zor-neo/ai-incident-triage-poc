@@ -204,6 +204,13 @@ never fails the run, because this account also hosts earlier labs.
   Session Manager permissions limited to the documented minimum.
 - **Network.** Only port 80 is open on the ALB. The app security group accepts
   traffic **only by reference** from the ALB security group, never from a CIDR.
+- **The exposure is real, not hypothetical.** The ALB's own access logs show the
+  public endpoint being scanned continuously: a 128-request phpMyAdmin sweep in
+  one minute (`Go Web Pentest Tool`), MCP/SSE endpoint discovery, `/.git/config`
+  disclosure probes, `zgrab` and a Palo Alto scanner — all reaching the
+  application and all refused with a `404`. None of it is a *control*; it is the
+  app's route table doing its job. Evidence and analysis:
+  [`docs/evidence/level1-access-log-forensics.md`](docs/evidence/level1-access-log-forensics.md).
 - **`cdk-nag` (`AwsSolutionsChecks`) runs on every `cdk synth`.** Every accepted
   finding has a written justification in the stack; the build fails on anything
   not explicitly acknowledged.
@@ -218,15 +225,22 @@ never fails the run, because this account also hosts earlier labs.
   the alert SNS topic.
 - Custom business metrics: `TriageSuccess`, `TriageFallback`
   (and `TriageFallbackByReason`), `BedrockLatencyMs`, `TokensUsed`.
-- **Measured, not assumed.** A deliberate `systemctl stop` fault injection showed
-  the target going `unhealthy` in 58s and the alarm firing **6m44s** later — and
-  exposed a second, worse problem: **zero alerts were delivered**, because the SNS
-  email subscription was still `PendingConfirmation`. After tuning (15s health
-  check, alarm on the first datapoint) the same fault pages in **1m25s** and clears
-  in 43s. The subscription is confirmed now, and the path is checked by
-  `scripts/adhoc/verify_alert_path.sh` instead of trusted — see
+- **Measured, not assumed — and then the measurement was audited.** A deliberate
+  `systemctl stop` fault injection showed the target going `unhealthy` in ~78s and
+  the alarm firing **6m44s** later — and exposed a worse problem: **zero alerts
+  were delivered**, because the SNS email subscription was still
+  `PendingConfirmation`. Tuning it (15s health check, alarm on the first datapoint)
+  dropped the datapoints the alarm needs from 3 → 2 → 1 — a change the alarm
+  history records in its own reason strings. But re-reading that history a day
+  later showed the published tuned figure (**1m25s**) did not reconcile with
+  primary evidence: a consistent **~3-minute** CloudWatch pipeline lag dominates,
+  and the v3 number had been measured across the very `cdk deploy` that replaced
+  the instance. The honest end-to-end figure is **~3 minutes**, and the correction
+  is written into
   [INC-0002](docs/incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)
-  (status: **resolved**).
+  (status: **resolved**) rather than quietly edited. The subscription is confirmed,
+  and the path is now checked by `scripts/adhoc/verify_alert_path.sh` instead of
+  trusted.
 - Runbook and game-day checklist: [`docs/runbooks/level1-runbook.md`](docs/runbooks/level1-runbook.md).
 - Incident reports, written from live first-hand evidence:
   [`docs/incidents/`](docs/incidents) —

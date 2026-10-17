@@ -195,9 +195,15 @@ it can be re-run rather than retyped: `instance_ssm.sh` drives step 1, and
 behind `--confirm-degradation`).
 
 1. Break the health check (`systemctl stop incident-triage` via SSM RunCommand),
-   confirm the ALB target goes `unhealthy` in **~60s**, the
-   `IncidentTriage-level1-alb-unhealthy-targets` alarm reaches `ALARM` in
-   **~1.5 min**, and an email arrives. Restore and confirm recovery in **~45s**.
+   confirm the ALB target goes `unhealthy` in **~45-80s** (15s interval × 3
+   threshold), the `IncidentTriage-level1-alb-unhealthy-targets` alarm reaches
+   `ALARM`, and an email arrives. Restore and confirm recovery.
+   **Take the latency from the datapoint named in the alarm's `stateReason`, never
+   from wall clock, and expect the visible transition ~3 minutes after it** — that
+   CloudWatch pipeline lag is the dominant term in this stack, not the health
+   check. **Deploy, then wait for the target to settle `healthy` before injecting:**
+   a deploy replaces the instance and the replacement is itself an unhealthy blip,
+   which is exactly how INC-0002's v3 figure came out wrong.
    Measured before tuning: 78s to `unhealthy`, 6m44s to `ALARM`, 0 alerts delivered
    (the subscription was still unconfirmed). **After 2026-10-17 the last one is the
    one to watch for: an alarm that fires with no email means the path broke again.**

@@ -176,7 +176,19 @@ aws ssm send-command --document-name AWS-RunShellScript \
 | 15s health check, 2x60s alarm | 15:22:44 | 15:23:42 | 15:27:39 | 4m55s |
 | 15s health check, 1x60s alarm | 15:35:48 | 15:36:47 | 15:37:13 | 1m25s |
 
-Recovery after `systemctl start`: 43s to `healthy` + alarm `OK` (was ~3m45s).
+> **Correction (2026-10-18).** The v2 and v3 rows above do not survive re-checking
+> against `describe-alarm-history`. v2 was **4m48s** (transition 15:27:32, not
+> 15:27:39), and the v3 transition logged here (15:37:13) actually cites a metric
+> datapoint from **before** the injection — a symptom of measuring across the
+> `cdk deploy` that replaced the instance. The honest v3 figure is **~3 minutes**,
+> dominated by a consistent ~3-minute CloudWatch pipeline lag. See
+> [INC-0002](../incidents/0002-fault-detection-latency-and-unconfirmed-alert-path.md)
+> (measurement correction) and the
+> [access-log forensics](level1-access-log-forensics.md). The table is left as
+> written; this note is the correction.
+
+Recovery after `systemctl start`: 43s to `healthy` + alarm `OK` (was ~3m45s) —
+same caveat: the "43s" used the mis-attributed v3 transition (see above).
 Alarm transition, taken from `describe-alarm-history`:
 
 ```

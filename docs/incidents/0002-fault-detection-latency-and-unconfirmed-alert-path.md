@@ -3,9 +3,10 @@
 - **Date / time (UTC):** 2026-10-17, 15:03:57-15:38:09
 - **Environment:** Level 1 (`IncidentTriage-level1`, `us-east-1`)
 - **Detected by:** deliberate fault injection (game day #1, SSM `systemctl stop`)
-- **Severity / user impact:** API requests failed from 15:03:57 to 15:12:56
-  (~9 minutes). No customers exist; the impact is the *detection* delay, not the
-  outage.
+- **Severity / user impact:** the service was stopped from 15:03:57 to ~15:11:39
+  (~7m42s). No *user* request is observed to have failed in that window (see the
+  measurement correction below); no customers exist, so the impact is the
+  *detection* delay, not the outage.
 - **Author:** repo owner (solo operator)
 
 ## Summary
@@ -14,12 +15,15 @@ Stopping the service did exactly what was expected to the ALB (target `unhealthy
 in ~78 seconds), but the alarm took **6m44s** to enter `ALARM`, and when it did,
 the notification could not be delivered at all: the SNS email subscription is in
 `PendingConfirmation`. The alarm is now tuned to fire on the first unhealthy
-datapoint and the health check interval is halved; the same fault now pages in
-**1m25s**.
+datapoint and the health check interval is halved. The published headline for that
+tuned configuration (**1m25s**) did **not** survive re-checking against the alarm
+history — see the measurement correction below.
 
 ## Status: **resolved** (both findings) — 2026-10-17
 
-- **Detection latency:** fixed and asserted by a test (1m25s, was 6m44s).
+- **Detection latency:** the tuning is fixed and asserted by a test; the *measured*
+  figure was corrected on 2026-10-18 because the alarm history could not reproduce
+  it (see the measurement correction below).
 - **Delivery:** the owner confirmed the SNS email subscription at ~23:40 local.
   `list-subscriptions-by-topic` now returns a real `SubscriptionArn`
   (`…:3803e2c5-…`) instead of `PendingConfirmation`, and a one-off
@@ -35,7 +39,76 @@ The narrative below is left exactly as written at the time — the point of the
 incident record is that the path was assumed and unverified, not that it was
 eventually fixed.
 
+## Measurement correction (2026-10-18) — two published figures were wrong
+
+The alarm history and the ALB access logs were re-read the next day
+([forensics](../evidence/level1-access-log-forensics.md)). **The tuning narrative
+holds; two numbers do not.** The v2 and v3 rows of the timeline below are
+superseded by this section.
+
+Complete `describe-alarm-history` for the day (times UTC; datapoints quoted from
+each transition's own `stateReason`):
+
+| Transition | New state | Datapoints cited in the reason | Datapoints required | Pipeline lag |
+| :--- | :--- | :--- | :--- | :--- |
+| 14:45:41 | OK | 3 missing → `notBreaching` | — | — |
+| 15:10:41 | ALARM | `15:05, 15:06, 15:07` all `1.0` | **3** | 3m41s |
+| 15:15:41 | OK | `15:12 = 0.0` | 1 | 3m41s |
+| 15:27:32 | ALARM | `15:23, 15:24` `1.0` | **2** | 3m32s |
+| 15:31:32 | OK | `15:28 = 0.0` | 1 | 3m32s |
+| 15:37:08 | ALARM | `15:34 = 1.0` | **1** | 3m08s |
+| 15:38:08 | OK | `15:35 = 0.0` | 1 | 3m08s |
+| 15:39:08 | ALARM | `15:36 = 1.0` | **1** | 3m08s |
+| 15:40:08 | OK | `15:37 = 0.0` | 1 | 3m08s |
+
+**What it confirms.**
+
+- **The tuning is real, and the system recorded it.** Each reason string states how
+  many datapoints the OK→ALARM transition required: **3, then 2, then 1.** That is
+  the v1→v2→v3 progression, evidenced by AWS rather than by me.
+- **There is a consistent ~3-minute pipeline lag** between the minute a datapoint
+  covers and the operator-visible transition (3m41s / 3m32s / 3m08s). The original
+  write-up estimated this at 60-90s; that under-estimate is most of the reason the
+  published figures were too small.
+
+**What it refutes.**
+
+- **v2: 4m55s → 4m48s.** The transition is 15:27:32, not 15:27:39.
+- **v3: 1m25s is not reproducible.** The transition recorded as v3's (15:37:08)
+  cites datapoint **15:34:00** — *before* the recorded injection at 15:35:48. An
+  alarm cannot fire on a datapoint that precedes the fault. The transition that
+  lines up with the recorded injection (target unhealthy ≈15:36:47 → datapoint
+  `15:36 = 1.0`) is **15:39:08**, which is **3m20s** after the injected stop. The
+  target also **flapped** across `15:34=1.0, 15:35=0.0, 15:36=1.0, 15:37=0.0` —
+  two separate unhealthy episodes and two extra state changes the narrative never
+  mentioned.
+
+**Why v3 is confounded — and the lesson.**
+
+- **Every tuning iteration was a `cdk deploy`, and a deploy replaces the instance**
+  (INC-0001 / ADR-0006). A booting instance is transiently out of service, so the
+  deploy that *implements* a detection fix shows up in the detection metric as an
+  unhealthy blip. The 15:34 datapoint (and the 15:37:08/15:38:08 pair) is almost
+  certainly that replacement; the 15:36 datapoint is the drill.
+- Therefore **you cannot measure a detection change on the same deploy that makes
+  it.** Deploy, wait for the target to settle `healthy`, *then* inject — which the
+  v1 iteration effectively did (long gap after its deploy) and v2/v3 did not.
+- **Corrected headline:** the tuned alarm demonstrably needs only **one** datapoint
+  (proven by the reason strings), but the honest end-to-end figure from this
+  session is **~3 minutes**, dominated by pipeline lag — not 1m25s.
+- **Recovery, likewise:** the "43s to clear" used the same mis-attributed
+  transition. The OK matching the restore is 15:40:08 (citing `15:37 = 0.0`), i.e.
+  **~2m42s** after the recorded restore at 15:37:26.
+
+**And the impact was never observed.** The access logs hold no `5xx` in any drill
+window and no client request at all during them. The real defect is the
+*invisible-fault* problem (RISK-9): a fault can persist without a human being told.
+It was never demonstrated as a user-facing error.
+
 ## Timeline (UTC) - three iterations of the same fault
+
+> The v2 and v3 rows below are the figures as first written; both are corrected in
+> the measurement-correction section above.
 
 | Iteration | Break | Target `unhealthy` | Alarm `ALARM` | MTTD | Alarm back `OK` after restore |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -135,6 +208,12 @@ if anyone re-lengthens the detection path.
   alarms or SNS, the operator confirms the email subscription is `Confirmed` and
   that a fault test reaches `ALARM`. A `PendingConfirmation` subscription is a
   deploy-blocking defect, not a to-do.
+- **Measure on a settled target, and trust the alarm's own "which datapoint".**
+  Never attribute a transition to a fault injection without checking that the
+  datapoint the alarm cites falls *after* the injection, and never measure a
+  detection change on the same deploy that makes it — a deploy replaces the
+  instance, and the replacement is itself an unhealthy blip (2026-10-18
+  correction).
 - Detection latency is now an asserted property of the stack (a test), not a
   hope - the same principle as the `/health` version check from INC-0001:
   **assert the outcome, not the configuration**.
@@ -155,3 +234,10 @@ if anyone re-lengthens the detection path.
 - I first assumed the slow alarm was a dimension mismatch (a classic cause). The
   arithmetic of the two debounce stages explained the observed delay exactly, which
   is why measurement - not intuition - drove the fix.
+- **I published a detection figure I had measured on a moving target** (wall-clock
+  stop → alarm, with a `cdk deploy` in between) and did not reconcile it with the
+  alarm's own `stateReason`. The reason string states which datapoint the alarm
+  fired on; a figure that contradicts it is wrong by construction. The tuning was
+  right, the measurement was not — and only re-reading primary evidence the next
+  day exposed that. A latency number is an assertion like any other, and it has to
+  be checkable.

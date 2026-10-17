@@ -8,8 +8,11 @@
 #       ./instance_ssm.sh target-health    # watch unhealthy -> alarm -> SNS
 #       ./instance_ssm.sh start-service    # recovery
 #   Run three times while tuning the alarm (v1 30s/3x60s, v2 15s/2x60s,
-#   v3 15s/1x60s) to measure mean time to detect: 6m44s, 4m55s, 1m25s, with a
-#   43s recovery. It was also used to read the application log and the user-data
+#   v3 15s/1x60s) to measure mean time to detect: 6m44s, 4m48s, and a v3 figure
+#   that did not survive re-checking against the alarm history (see INC-0002's
+#   measurement correction — the v3 number was measured across the deploy that
+#   replaced the instance; a consistent ~3min CloudWatch pipeline lag dominates).
+#   It was also used to read the application log and the user-data
 #   log while diagnosing INC-0001.
 #
 # WHAT IT PROVES
