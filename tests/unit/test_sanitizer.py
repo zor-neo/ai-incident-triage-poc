@@ -51,6 +51,23 @@ def test_email_is_redacted():
     assert "admin@example.com" not in result.text
 
 
+def test_password_assignment_is_redacted():
+    result = sanitize("password=S3cr3t-Passw0rd!")
+    assert REDACTED_SECRET in result.text
+    assert "S3cr3t-Passw0rd" not in result.text
+
+
+def test_secret_resource_path_is_not_over_redacted():
+    # Regression: real AccessDenied logs name the resource, e.g.
+    # ...secret:prod/payment/db-pass - keep the path so triage can point at it.
+    raw = (
+        "AccessDenied on arn:aws:secretsmanager:us-east-1:123456789012"
+        ":secret:prod/payment/db-pass"
+    )
+    result = sanitize(raw)
+    assert "prod/payment/db-pass" in result.text
+
+
 def test_ipv4_is_redacted():
     result = sanitize("connection refused from 10.20.3.15:5432")
     assert REDACTED_IP in result.text

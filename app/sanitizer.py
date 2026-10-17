@@ -38,7 +38,7 @@ _PATTERNS: list[tuple[str, Pattern[str], str]] = [
     ),
     (
         "password_assignment",
-        re.compile(r"(?i)((?:password|passwd|pwd|secret|token)\s*[:=]\s*[\"']?)([^\s\"']{6,})"),
+        re.compile(r"(?i)((?:password|passwd|pwd|secret|token)\s*[:=]\s*[\"']?)([^\s\"'/]{6,})"),
         rf"\1{REDACTED_SECRET}",
     ),
     (
