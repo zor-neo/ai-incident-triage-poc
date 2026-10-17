@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "Time-boxed exceptions to the ECR scan gate (scripts/ecr_scan_gate.py).",
+    "The gate blocks HIGH/CRITICAL by default. An entry here is the only way a",
+    "finding may be promoted, and every entry must state why the vulnerable code",
+    "is unreachable, who owns it, and when it must be looked at again.",
+    "An entry whose review_by date has passed is treated as a failure by the",
+    "gate, not a warning."
+  ],
+  "exceptions": [
+    {
+      "cve": "CVE-2026-85091",
+      "package": "zlib",
+      "reason": "Heap buffer overflow in gz_vacate(), reachable only through the streaming gzwrite()/gzprintf() API with stale external buffer pointers. The image includes libz only as a transitive OS library; the application and its dependencies use the one-shot zlib.compress/decompress path, never the streaming gz* API.",
+      "owner": "justin@zorneo.dev",
+      "recorded": "2026-10-18",
+      "review_by": "2026-11-17",
+      "upstream": "No fixed Debian version exists yet: apt-cache policy reports installed 1:1.3.dfsg+really1.3.1-1+b1 == candidate in trixie."
+    },
+    {
+      "cve": "CVE-2026-19499",
+      "package": "glibc",
+      "reason": "Out-of-bounds write in strfmon()/strfmon_l() with right-justified width padding. Neither the application nor its dependencies call strfmon or strfmon_l.",
+      "owner": "justin@zorneo.dev",
+      "recorded": "2026-10-18",
+      "review_by": "2026-11-17",
+      "upstream": "No fixed Debian version exists yet: libc6 2.41-12+deb13u4 installed == candidate in trixie."
+    },
+    {
+      "cve": "CVE-2026-5435",
+      "package": "glibc",
+      "reason": "Out-of-bounds write in the deprecated ns_printrrf/ns_printrr/fp_nquery DNS record printers when printing TSIG records. The service performs no DNS record printing and does not link a resolver that uses these symbols.",
+      "owner": "justin@zorneo.dev",
+      "recorded": "2026-10-18",
+      "review_by": "2026-11-17",
+      "upstream": "No fixed Debian version exists yet: libc6 2.41-12+deb13u4 installed == candidate in trixie."
+    }
+  ]
+}
