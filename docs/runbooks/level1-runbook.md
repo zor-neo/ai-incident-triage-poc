@@ -184,6 +184,12 @@ pending, click the AWS confirmation email first - otherwise every alarm is silen
    Measured before tuning: 78s to `unhealthy`, 6m44s to `ALARM`, 0 alerts delivered.
 2. Force `AI_UNAVAILABLE` (point `BEDROCK_MODEL_ID` at a non-existent model,
    restart) and confirm the API still returns `202` and stores the incident.
+   Measured 2026-10-17: `202 AI_UNAVAILABLE` in 54ms with the incident persisted
+   and the raw `sanitized_log` intact; logs show `bedrock_invoke_failed`
+   (`ValidationException`, `reached max retries: 0`) and `triage_fallback`
+   (`reason=client_error`), and the metric `TriageFallbackByReason{Reason=client_error}`
+   appears in the `IncidentTriage` namespace. Reverting the env var and restarting
+   restores `201 TRIAGED` (~500ms).
 3. Deny one narrowly scoped permission (remove `dynamodb:GetItem`) and confirm
    the failure is the expected one, not a crash.
 4. Destroy the stack and verify zero orphans with `scripts/cleanup.sh`.
