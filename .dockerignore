@@ -1,0 +1,27 @@
+# Build context exclusions. The image only needs requirements.lock.hashed.txt
+# and app/; everything else is repo material that would otherwise be shipped to
+# the Docker daemon on every build.
+.git
+.gitignore
+.gitattributes
+.github
+.venv
+.pytest_cache
+.ruff_cache
+cdk.out
+**/cdk.out
+**/__pycache__
+**/*.pyc
+tests
+docs
+infra
+scripts
+*.md
+.env
+.env.*
+# The unhashed lock is for the EC2 bootstrap; the container installs the
+# hashed closure instead.
+requirements.lock.txt
+requirements.lock.hashed.txt.bak
+Dockerfile
+.dockerignore
