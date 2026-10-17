@@ -537,6 +537,9 @@ class Level2EcsStack(Stack):
                 "task_definition_family": task_definition.family,
                 "target_group": target_group.target_group_name,
                 "task_role": task_role.role_arn,
+                "port": str(env["listener_port"]),
+                "url": f"http://{alb.load_balancer_dns_name}"
+                + ("" if str(env["listener_port"]) == "80" else f":{env['listener_port']}"),
             }
             execution_roles.append(execution_role)
             task_roles.append(task_role)
@@ -717,18 +720,17 @@ class Level2EcsStack(Stack):
 
         # --- Outputs -------------------------------------------------------
         for env_name, info in outputs.items():
-            CfnOutput(self, f"ServiceName-{env_name}", value=info["service"])
-            CfnOutput(
-                self, f"TaskDefinitionFamily-{env_name}", value=info["task_definition_family"]
-            )
-            CfnOutput(self, f"TableName-{env_name}", value=info["table"])
+            label = env_name.capitalize()
+            # The URL must come from the per-environment entry, not from the loop
+            # variable - an earlier version read `env["listener_port"]` after the
+            # loop had finished, so the staging URL was emitted with prod's port.
+            CfnOutput(self, f"ServiceName{label}", value=info["service"])
+            CfnOutput(self, f"TaskDefinitionFamily{label}", value=info["task_definition_family"])
+            CfnOutput(self, f"TableName{label}", value=info["table"])
             CfnOutput(
                 self,
-                "StagingUrl" if env_name == "staging" else "ProdUrl",
-                value=(
-                    f"http://{alb.load_balancer_dns_name}"
-                    + (f":{env['listener_port']}" if env_name != "prod" else "")
-                ),
+                f"{label}Url",
+                value=info["url"],
                 description=f"Base URL for the {env_name} environment",
             )
         CfnOutput(self, "LoadBalancerDnsName", value=alb.load_balancer_dns_name)

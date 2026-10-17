@@ -334,6 +334,15 @@ def test_deploy_role_cannot_touch_application_data(template: assertions.Template
 # --- Data -------------------------------------------------------------------
 
 
+def test_environment_urls_carry_the_right_listener_port(template: assertions.Template):
+    """Guards a real bug: the staging URL was emitted with prod's port (80)."""
+    outputs = template.find_outputs("*")
+    staging = str(outputs["StagingUrl"]["Value"])
+    prod = str(outputs["ProdUrl"]["Value"])
+    assert "8080" in staging, f"staging URL must target the 8080 listener: {staging}"
+    assert "8080" not in prod, f"prod URL must not mention staging's port: {prod}"
+
+
 def test_one_private_table_per_environment(template: assertions.Template):
     tables = template.find_resources("AWS::DynamoDB::Table")
     names = sorted(t["Properties"]["TableName"] for t in tables.values())
